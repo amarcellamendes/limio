@@ -42,7 +42,9 @@ _frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")
 _frontend_dir = os.path.abspath(_frontend_dir)
 
 if os.path.isdir(_frontend_dir):
-    app.mount("/static", StaticFiles(directory=os.path.join(_frontend_dir, "static")), name="static")
+    _static_dir = os.path.join(_frontend_dir, "static")
+    if os.path.isdir(_static_dir):
+        app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
     @app.get("/", include_in_schema=False)
     @app.get("/{full_path:path}", include_in_schema=False)
