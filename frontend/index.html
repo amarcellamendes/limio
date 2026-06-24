@@ -1,0 +1,3080 @@
+<!DOCTYPE html>
+<html lang="pt-BR" x-data="app()" x-init="init()">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Emissor NF · Contador</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary:  { DEFAULT: '#013957', light: '#024d77', dark: '#012840' },
+            accent:   { DEFAULT: '#0891b2', light: '#22b8d8', dark: '#0672a0' },
+            cream:    { DEFAULT: '#f1f5f9', dark: '#e2e8f0' },
+          }
+        }
+      }
+    }
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    /* Sidebar */
+    .sl { display:flex; align-items:center; gap:12px; padding:10px 16px; border-radius:8px; font-size:.875rem; font-weight:600; transition:all .15s; width:100%; color:#ffffff; }
+    .sl:hover { background:rgba(255,255,255,.12); }
+    .sl.active { background:#0891b2; color:#fff; }
+    /* Utilitários */
+    .btn-primary  { background:#0891b2; color:#fff; font-weight:600; padding:8px 16px; border-radius:8px; font-size:.875rem; transition:background .15s; border:none; cursor:pointer; }
+    .btn-primary:hover  { background:#0672a0; }
+    .btn-primary:disabled { opacity:.6; cursor:not-allowed; }
+    .btn-secondary{ background:#fff; border:1px solid #d1d5db; color:#374151; font-weight:500; padding:8px 16px; border-radius:8px; font-size:.875rem; transition:background .15s; cursor:pointer; }
+    .btn-secondary:hover { background:#f8fafc; }
+    .btn-danger   { background:#dc2626; color:#fff; font-weight:600; padding:8px 16px; border-radius:8px; font-size:.875rem; transition:background .15s; cursor:pointer; }
+    .btn-danger:hover { background:#b91c1c; }
+    .btn-danger:disabled { opacity:.6; cursor:not-allowed; }
+    .card  { background:#fff; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,.06); border:1px solid #e2e8f0; padding:24px; }
+    .input { width:100%; border:1px solid #cbd5e1; border-radius:8px; padding:8px 12px; font-size:.875rem; outline:none; transition:box-shadow .15s; }
+    .input:focus { box-shadow:0 0 0 2px #0891b230; border-color:#0891b2; }
+    .input:disabled { background:#f9fafb; color:#9ca3af; }
+    .label { display:block; font-size:.7rem; font-weight:700; color:#4b5563; margin-bottom:4px; text-transform:uppercase; letter-spacing:.05em; }
+    .badge-emitida   { display:inline-flex; align-items:center; padding:1px 8px; border-radius:9999px; font-size:.75rem; font-weight:500; background:#dcfce7; color:#166534; }
+    .badge-pendente  { display:inline-flex; align-items:center; padding:1px 8px; border-radius:9999px; font-size:.75rem; font-weight:500; background:#fef9c3; color:#854d0e; }
+    .badge-cancelada { display:inline-flex; align-items:center; padding:1px 8px; border-radius:9999px; font-size:.75rem; font-weight:500; background:#fee2e2; color:#991b1b; }
+    .badge-substituida { display:inline-flex; align-items:center; padding:1px 8px; border-radius:9999px; font-size:.75rem; font-weight:500; background:#e0e7ff; color:#3730a3; }
+    .badge-erro      { display:inline-flex; align-items:center; padding:1px 8px; border-radius:9999px; font-size:.75rem; font-weight:500; background:#ffedd5; color:#9a3412; }
+    .badge-nfse      { display:inline-flex; align-items:center; padding:1px 8px; border-radius:9999px; font-size:.75rem; font-weight:500; background:#dbeafe; color:#1e40af; }
+    .badge-nfe       { display:inline-flex; align-items:center; padding:1px 8px; border-radius:9999px; font-size:.75rem; font-weight:500; background:#f3e8ff; color:#6b21a8; }
+    .badge-recebida  { display:inline-flex; align-items:center; padding:1px 8px; border-radius:9999px; font-size:.75rem; font-weight:500; background:#d1fae5; color:#065f46; }
+    .badge-manual    { display:inline-flex; align-items:center; padding:1px 8px; border-radius:9999px; font-size:.75rem; font-weight:500; background:#f1f5f9; color:#475569; }
+  </style>
+</head>
+<body class="bg-slate-50 text-gray-900 font-sans">
+
+<!-- ═══════════════════════════════════════════
+     TELA DE LOGIN / REGISTRO
+═══════════════════════════════════════════ -->
+<div x-show="!token" x-cloak class="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary to-primary-dark p-4">
+  <div class="w-full max-w-md">
+    <div class="text-center mb-8">
+      <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-accent mb-4">
+        <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+      </div>
+      <h1 class="text-2xl font-bold text-white">Emissor de Notas Fiscais</h1>
+      <p class="text-blue-200 text-sm mt-1">Plataforma para escritórios contábeis</p>
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-2xl p-8">
+      <!-- Abas login / registrar -->
+      <div class="flex border-b border-gray-200 mb-6">
+        <button @click="authTab='login'"
+          :class="authTab==='login' ? 'border-b-2 border-accent text-accent font-semibold' : 'text-gray-500 hover:text-gray-700'"
+          class="flex-1 pb-3 text-sm transition-colors">Entrar</button>
+        <button @click="authTab='register'"
+          :class="authTab==='register' ? 'border-b-2 border-accent text-accent font-semibold' : 'text-gray-500 hover:text-gray-700'"
+          class="flex-1 pb-3 text-sm transition-colors">Criar conta</button>
+      </div>
+
+      <!-- Login -->
+      <form x-show="authTab==='login'" @submit.prevent="login()" class="space-y-4">
+        <div>
+          <label class="label">E-mail</label>
+          <input type="email" x-model="loginForm.email" class="input" placeholder="contador@escritorio.com.br" required />
+        </div>
+        <div>
+          <label class="label">Senha</label>
+          <input type="password" x-model="loginForm.senha" class="input" placeholder="••••••••" required />
+        </div>
+        <div x-show="authError" class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3" x-text="authError"></div>
+        <button type="submit" class="w-full btn-primary py-3" :disabled="loading">
+          <span x-show="!loading">Entrar</span>
+          <span x-show="loading">Carregando...</span>
+        </button>
+      </form>
+
+      <!-- Registro -->
+      <form x-show="authTab==='register'" @submit.prevent="registrar()" class="space-y-4">
+        <div class="grid grid-cols-2 gap-3">
+          <div class="col-span-2">
+            <label class="label">Nome do Escritório</label>
+            <input type="text" x-model="regForm.nome" class="input" placeholder="Escritório Contábil Ltda" required />
+          </div>
+          <div>
+            <label class="label">CNPJ do Escritório</label>
+            <input type="text" x-model="regForm.cnpj" class="input" placeholder="00.000.000/0001-00" required />
+          </div>
+          <div>
+            <label class="label">CRC</label>
+            <input type="text" x-model="regForm.crc" class="input" placeholder="AM-001234/O-8" />
+          </div>
+          <div class="col-span-2 border-t pt-3">
+            <p class="text-xs text-gray-500 mb-3">Dados do responsável (usuário admin)</p>
+          </div>
+          <div>
+            <label class="label">Seu Nome</label>
+            <input type="text" x-model="regForm.usuario_nome" class="input" placeholder="Maria da Silva" required />
+          </div>
+          <div>
+            <label class="label">Seu E-mail</label>
+            <input type="email" x-model="regForm.usuario_email" class="input" placeholder="maria@escritorio.com.br" required />
+          </div>
+          <div class="col-span-2">
+            <label class="label">E-mail do Escritório</label>
+            <input type="email" x-model="regForm.email" class="input" placeholder="contato@escritorio.com.br" required />
+          </div>
+          <div class="col-span-2">
+            <label class="label">Senha</label>
+            <input type="password" x-model="regForm.senha" class="input" placeholder="Mínimo 8 caracteres" required />
+          </div>
+        </div>
+        <div x-show="authError" class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3" x-text="authError"></div>
+        <button type="submit" class="w-full btn-primary py-3" :disabled="loading">
+          <span x-show="!loading">Criar conta grátis</span>
+          <span x-show="loading">Criando...</span>
+        </button>
+        <p class="text-xs text-center text-gray-400">Plano Free: 10 notas/mês sem cartão</p>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     APP PRINCIPAL (após login)
+═══════════════════════════════════════════ -->
+<div x-show="token" x-cloak class="flex h-screen overflow-hidden">
+
+  <!-- Sidebar -->
+  <aside class="w-60 bg-primary flex flex-col flex-shrink-0">
+    <div class="p-5 border-b border-primary-light">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-lg bg-accent flex items-center justify-center">
+          <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
+        </div>
+        <span class="text-white font-bold text-sm leading-tight">Emissor NF</span>
+      </div>
+    </div>
+
+    <nav class="flex-1 p-3 space-y-1 overflow-y-auto">
+      <button @click="goto('dashboard')" :class="page==='dashboard' ? 'active' : ''" class="sl w-full">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+        Dashboard
+      </button>
+      <button @click="goto('notas')" :class="page==='notas' ? 'active' : ''" class="sl w-full">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+        Notas Emitidas
+      </button>
+      <button @click="goto('recebidas')" :class="page==='recebidas' ? 'active' : ''" class="sl w-full">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
+        <span class="flex-1 text-left">Docs Recebidos</span>
+        <span x-show="(dashRecebidos?.pendentes_manifestacao_nfe ?? 0) > 0" x-cloak
+              class="ml-1 text-xs font-bold bg-red-500 text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center"
+              x-text="dashRecebidos.pendentes_manifestacao_nfe"></span>
+      </button>
+      <button @click="goto('calendario')" :class="page==='calendario' ? 'active' : ''" class="sl w-full">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        Calendário Fiscal
+      </button>
+      <div class="pt-2 pb-1 px-4">
+        <p class="text-xs text-white/50 uppercase tracking-widest font-semibold">Emissão</p>
+      </div>
+      <button @click="goto('contratos')" :class="page==='contratos' ? 'active' : ''" class="sl w-full">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        Contratos Recorrentes
+        <span x-show="contratosNaFila?.length > 0" x-cloak
+              class="ml-auto text-xs font-bold bg-amber-500 text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center"
+              x-text="contratosNaFila.length"></span>
+      </button>
+      <button @click="goto('emitir-nfse')" :class="page==='emitir-nfse' ? 'active' : ''" class="sl w-full">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        Emitir NFS-e
+      </button>
+      <button @click="goto('emitir-nfe')" :class="page==='emitir-nfe' ? 'active' : ''" class="sl w-full">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+        Emitir NF-e
+      </button>
+      <div class="pt-2 pb-1 px-4">
+        <p class="text-xs text-white/50 uppercase tracking-widest font-semibold">Cadastros</p>
+      </div>
+      <button @click="goto('clientes')" :class="page==='clientes' ? 'active' : ''" class="sl w-full">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+        Clientes (CNPJs)
+      </button>
+
+      <div class="pt-2 pb-1 px-4">
+        <p class="text-xs text-white/50 uppercase tracking-widest font-semibold">Conta</p>
+      </div>
+      <button @click="goto('configuracoes')" :class="page==='configuracoes' ? 'active' : ''" class="sl w-full">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        Configurações
+      </button>
+      <button @click="goto('planos')" :class="page==='planos' ? 'active' : ''" class="sl w-full">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/></svg>
+        Planos & Upgrade
+      </button>
+    </nav>
+
+    <!-- Info plano + logout -->
+    <div class="p-3 border-t border-primary-light">
+      <div class="bg-primary-light rounded-lg p-3 mb-2">
+        <div class="flex justify-between items-center mb-1">
+          <span class="text-xs text-blue-200">Plano</span>
+          <span class="text-xs font-bold text-accent uppercase" x-text="session.plano || 'free'"></span>
+        </div>
+        <div x-show="dash" class="text-xs text-blue-200">
+          <span x-text="dash?.notas_mes || 0"></span> / <span x-text="dash?.limite_mes || 10"></span> notas/mês
+          <div class="mt-1 h-1.5 bg-primary rounded-full overflow-hidden">
+            <div class="h-full bg-accent rounded-full transition-all" :style="`width:${Math.min(dash?.percentual_uso||0,100)}%`"></div>
+          </div>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 px-1">
+        <div class="w-7 h-7 rounded-full bg-accent flex items-center justify-center text-white text-xs font-bold"
+             x-text="(session.usuario_nome||'?')[0]?.toUpperCase()"></div>
+        <div class="flex-1 min-w-0">
+          <p class="text-white text-xs font-medium truncate" x-text="session.usuario_nome"></p>
+          <p class="text-blue-300 text-xs truncate" x-text="session.escritorio_nome"></p>
+        </div>
+        <button @click="logout()" title="Sair" class="text-blue-300 hover:text-white transition-colors">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Conteúdo principal -->
+  <main class="flex-1 overflow-y-auto">
+
+    <!-- Toast -->
+    <div x-show="toast.show" x-cloak
+         x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-2" x-transition:enter-end="opacity-100 translate-y-0"
+         x-transition:leave="transition ease-in duration-200" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"
+         class="fixed top-4 right-4 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium max-w-sm"
+         :class="toast.type==='error' ? 'bg-red-600 text-white' : 'bg-green-600 text-white'">
+      <span x-text="toast.msg"></span>
+    </div>
+
+    <!-- ── DASHBOARD ── -->
+    <div x-show="page==='dashboard'" class="p-6">
+      <div class="mb-6">
+        <h2 class="text-xl font-bold text-primary">Dashboard</h2>
+        <p class="text-sm text-gray-500">Visão geral do escritório</p>
+      </div>
+
+      <div x-show="loadingPage" class="flex justify-center py-20">
+        <div class="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin"></div>
+      </div>
+
+      <div x-show="!loadingPage && dash">
+        <!-- KPIs -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div class="card">
+            <p class="text-xs text-gray-500 uppercase tracking-wide font-semibold">Clientes</p>
+            <p class="text-3xl font-bold text-primary mt-1" x-text="dash?.total_clientes || 0"></p>
+          </div>
+          <div class="card">
+            <p class="text-xs text-gray-500 uppercase tracking-wide font-semibold">Notas Hoje</p>
+            <p class="text-3xl font-bold text-primary mt-1" x-text="dash?.notas_hoje || 0"></p>
+          </div>
+          <div class="card">
+            <p class="text-xs text-gray-500 uppercase tracking-wide font-semibold">Notas no Mês</p>
+            <p class="text-3xl font-bold text-primary mt-1" x-text="dash?.notas_mes || 0"></p>
+            <p class="text-xs text-gray-400 mt-1">Limite: <span x-text="dash?.limite_mes"></span></p>
+          </div>
+          <div class="card">
+            <p class="text-xs text-gray-500 uppercase tracking-wide font-semibold">Valor Emitido (Mês)</p>
+            <p class="text-2xl font-bold text-accent mt-1" x-text="fmtBRL(dash?.valor_mes || 0)"></p>
+          </div>
+        </div>
+
+        <!-- Uso do plano -->
+        <div class="card mb-6">
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-sm font-semibold text-primary">Uso do plano <span class="uppercase text-accent" x-text="session.plano"></span></p>
+            <span class="text-sm text-gray-500"><span x-text="dash?.notas_mes"></span> de <span x-text="dash?.limite_mes"></span> notas</span>
+          </div>
+          <div class="h-3 bg-gray-100 rounded-full overflow-hidden">
+            <div class="h-full bg-accent rounded-full transition-all duration-500"
+                 :style="`width:${Math.min(dash?.percentual_uso||0,100)}%`"
+                 :class="(dash?.percentual_uso||0) > 85 ? 'bg-red-500' : 'bg-accent'"></div>
+          </div>
+          <p class="text-xs text-gray-400 mt-1"><span x-text="dash?.percentual_uso?.toFixed(1)"></span>% utilizado</p>
+        </div>
+
+        <!-- Últimas notas -->
+        <div class="card">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-primary">Últimas Notas</h3>
+            <button @click="goto('notas')" class="text-accent text-sm hover:underline">Ver todas →</button>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-gray-100">
+                  <th class="text-left py-2 text-xs text-gray-500 font-semibold uppercase">Número</th>
+                  <th class="text-left py-2 text-xs text-gray-500 font-semibold uppercase">Tipo</th>
+                  <th class="text-left py-2 text-xs text-gray-500 font-semibold uppercase">Cliente</th>
+                  <th class="text-left py-2 text-xs text-gray-500 font-semibold uppercase">Valor</th>
+                  <th class="text-left py-2 text-xs text-gray-500 font-semibold uppercase">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="n in (dash?.ultimas_notas || [])" :key="n.id">
+                  <tr class="border-b border-gray-50 hover:bg-gray-50 cursor-pointer" @click="abrirNota(n)">
+                    <td class="py-2.5 font-mono text-xs" x-text="n.numero || `#${n.id}`"></td>
+                    <td class="py-2.5"><span :class="`badge-${n.tipo}`" x-text="n.tipo?.toUpperCase()"></span></td>
+                    <td class="py-2.5 max-w-[180px] truncate" x-text="n.cliente_razao_social || '—'"></td>
+                    <td class="py-2.5 font-medium" x-text="fmtBRL(n.valor_servico)"></td>
+                    <td class="py-2.5"><span :class="`badge-${n.status}`" x-text="n.status"></span></td>
+                  </tr>
+                </template>
+                <tr x-show="!dash?.ultimas_notas?.length">
+                  <td colspan="5" class="py-8 text-center text-gray-400 text-sm">Nenhuma nota emitida ainda.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── NOTAS FISCAIS ── -->
+    <div x-show="page==='notas'" class="p-6">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-xl font-bold text-primary">Notas Fiscais</h2>
+          <p class="text-sm text-gray-500">Histórico de notas emitidas</p>
+        </div>
+        <div class="flex gap-2">
+          <button @click="abrirModalRelatorio()" class="btn-secondary text-sm">📊 Relatório Mensal</button>
+          <button @click="goto('emitir-nfse')" class="btn-primary">+ NFS-e</button>
+          <button @click="goto('emitir-nfe')" class="btn-secondary">+ NF-e</button>
+        </div>
+      </div>
+
+      <!-- Filtros -->
+      <div class="card mb-4">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div>
+            <label class="label">Tipo</label>
+            <select x-model="filtros.tipo" @change="carregarNotas()" class="input">
+              <option value="">Todos</option>
+              <option value="nfse">NFS-e</option>
+              <option value="nfe">NF-e</option>
+            </select>
+          </div>
+          <div>
+            <label class="label">Status</label>
+            <select x-model="filtros.status" @change="carregarNotas()" class="input">
+              <option value="">Todos</option>
+              <option value="emitida">Emitida</option>
+              <option value="cancelada">Cancelada</option>
+              <option value="erro">Erro</option>
+            </select>
+          </div>
+          <div>
+            <label class="label">Competência</label>
+            <input type="month" x-model="filtros.competencia" @change="carregarNotas()" class="input" />
+          </div>
+          <div>
+            <label class="label">Cliente</label>
+            <select x-model="filtros.cliente_id" @change="carregarNotas()" class="input">
+              <option value="">Todos</option>
+              <template x-for="c in clientes" :key="c.id">
+                <option :value="c.id" x-text="c.razao_social"></option>
+              </template>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div x-show="loadingPage" class="flex justify-center py-10">
+        <div class="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin"></div>
+      </div>
+
+      <div class="card" x-show="!loadingPage">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b-2 border-gray-100">
+                <th class="text-left py-3 px-2 text-xs text-gray-500 font-semibold uppercase">Número</th>
+                <th class="text-left py-3 px-2 text-xs text-gray-500 font-semibold uppercase">Tipo</th>
+                <th class="text-left py-3 px-2 text-xs text-gray-500 font-semibold uppercase">Cliente</th>
+                <th class="text-left py-3 px-2 text-xs text-gray-500 font-semibold uppercase">Tomador</th>
+                <th class="text-left py-3 px-2 text-xs text-gray-500 font-semibold uppercase">Competência</th>
+                <th class="text-right py-3 px-2 text-xs text-gray-500 font-semibold uppercase">Valor</th>
+                <th class="text-left py-3 px-2 text-xs text-gray-500 font-semibold uppercase">Status</th>
+                <th class="text-left py-3 px-2 text-xs text-gray-500 font-semibold uppercase">Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="n in notas" :key="n.id">
+                <tr class="border-b border-gray-50 hover:bg-gray-50">
+                  <td class="py-3 px-2 font-mono text-xs text-gray-600" x-text="n.numero || `#${n.id}`"></td>
+                  <td class="py-3 px-2"><span :class="`badge-${n.tipo}`" x-text="n.tipo?.toUpperCase()"></span></td>
+                  <td class="py-3 px-2 max-w-[140px] truncate text-xs" x-text="n.cliente_razao_social || '—'"></td>
+                  <td class="py-3 px-2 max-w-[140px] truncate text-xs" x-text="n.tomador_razao_social || '—'"></td>
+                  <td class="py-3 px-2 text-xs" x-text="n.data_competencia || '—'"></td>
+                  <td class="py-3 px-2 text-right font-medium" x-text="fmtBRL(n.valor_servico)"></td>
+                  <td class="py-3 px-2"><span :class="`badge-${n.status}`" x-text="n.status"></span></td>
+                  <td class="py-3 px-2">
+                    <div class="flex gap-1">
+                      <a :href="`/api/notas/${n.id}/pdf`" target="_blank"
+                         class="inline-flex items-center px-2 py-1 rounded text-xs bg-primary text-white hover:bg-primary-dark" title="Baixar PDF">
+                        PDF
+                      </a>
+                      <a :href="`/api/notas/${n.id}/xml`" target="_blank"
+                         class="inline-flex items-center px-2 py-1 rounded text-xs bg-gray-200 text-gray-700 hover:bg-gray-300" title="Baixar XML">
+                        XML
+                      </a>
+                      <button x-show="n.status==='emitida'" @click="duplicarNota(n)"
+                         class="inline-flex items-center px-2 py-1 rounded text-xs bg-blue-100 text-blue-700 hover:bg-blue-200" title="Duplicar nota">
+                        ⧉
+                      </button>
+                      <button x-show="n.status==='emitida'" @click="substituirNota(n)"
+                         class="inline-flex items-center px-2 py-1 rounded text-xs bg-yellow-100 text-yellow-700 hover:bg-yellow-200" title="Substituir nota">
+                        ↺
+                      </button>
+                      <button x-show="n.status==='emitida' && !n.boleto_linha_digitavel" @click="emitirBoleto(n)"
+                         class="inline-flex items-center px-2 py-1 rounded text-xs bg-green-100 text-green-700 hover:bg-green-200" title="Emitir boleto">
+                        💳
+                      </button>
+                      <button x-show="n.boleto_linha_digitavel" @click="mostrarBoleto(n)"
+                         class="inline-flex items-center px-2 py-1 rounded text-xs bg-green-200 text-green-800 hover:bg-green-300" title="Ver boleto">
+                        💳✓
+                      </button>
+                      <button x-show="n.status==='emitida'" @click="iniciarCancelamento(n)"
+                         class="inline-flex items-center px-2 py-1 rounded text-xs bg-red-100 text-red-700 hover:bg-red-200" title="Cancelar">
+                        ✕
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="!notas.length">
+                <td colspan="8" class="py-10 text-center text-gray-400">Nenhuma nota encontrada.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── EMITIR NFS-e ── -->
+    <div x-show="page==='emitir-nfse'" class="p-6 max-w-3xl">
+      <div class="mb-6">
+        <h2 class="text-xl font-bold text-primary">Emitir NFS-e</h2>
+        <p class="text-sm text-gray-500">Nota Fiscal de Serviço Eletrônica</p>
+      </div>
+
+      <form @submit.prevent="emitirNFSe()" class="space-y-4">
+        <!-- Prestador -->
+        <div class="card">
+          <h3 class="font-semibold text-primary mb-4">Prestador de Serviços</h3>
+          <div>
+            <label class="label">Cliente (Prestador)</label>
+            <select x-model="nfseForm.cliente_id" class="input" required @change="onClienteSelect()">
+              <option value="">Selecione o cliente...</option>
+              <template x-for="c in clientes" :key="c.id">
+                <option :value="c.id" x-text="`${c.razao_social} — ${fmtCNPJ(c.cnpj)}`"></option>
+              </template>
+            </select>
+          </div>
+          <div x-show="clienteSelecionado" class="mt-3 p-3 bg-cream rounded-lg text-xs text-gray-600 grid grid-cols-3 gap-2">
+            <div><span class="font-semibold">Município:</span> <span x-text="clienteSelecionado?.municipio"></span>/<span x-text="clienteSelecionado?.uf"></span></div>
+            <div><span class="font-semibold">Regime:</span> <span x-text="clienteSelecionado?.regime_tributario"></span></div>
+            <div><span class="font-semibold">Provider:</span> <span class="font-mono" x-text="clienteSelecionado?.nfse_provider"></span></div>
+          </div>
+        </div>
+
+        <!-- Tomador -->
+        <div class="card">
+          <h3 class="font-semibold text-primary mb-4">Tomador de Serviços</h3>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="col-span-2">
+              <label class="label">CPF / CNPJ</label>
+              <div class="flex gap-2">
+                <input type="text" x-model="nfseForm.tomador.cpf_cnpj" class="input" placeholder="00.000.000/0001-00" required />
+                <button type="button" @click="buscarCNPJ(nfseForm.tomador.cpf_cnpj, 'tomador_nfse')"
+                  class="flex-shrink-0 bg-primary hover:bg-primary-dark text-white text-xs font-semibold px-3 py-2 rounded-lg transition-colors whitespace-nowrap">
+                  🔍 Buscar RFB
+                </button>
+              </div>
+              <p class="text-xs text-gray-400 mt-1">Informe o CNPJ e clique em "Buscar RFB" para preencher automaticamente.</p>
+            </div>
+            <div>
+              <label class="label">Razão Social / Nome</label>
+              <input type="text" x-model="nfseForm.tomador.razao_social" class="input" required />
+            </div>
+            <div>
+              <label class="label">E-mail</label>
+              <input type="email" x-model="nfseForm.tomador.email" class="input" />
+            </div>
+            <div>
+              <label class="label">CEP</label>
+              <input type="text" x-model="nfseForm.tomador.cep" class="input" placeholder="00000-000" />
+            </div>
+            <div class="col-span-2">
+              <label class="label">Logradouro</label>
+              <input type="text" x-model="nfseForm.tomador.logradouro" class="input" />
+            </div>
+            <div>
+              <label class="label">Número</label>
+              <input type="text" x-model="nfseForm.tomador.numero" class="input" />
+            </div>
+            <div>
+              <label class="label">Complemento</label>
+              <input type="text" x-model="nfseForm.tomador.complemento" class="input" />
+            </div>
+            <div>
+              <label class="label">Bairro</label>
+              <input type="text" x-model="nfseForm.tomador.bairro" class="input" />
+            </div>
+            <div>
+              <label class="label">Município</label>
+              <input type="text" x-model="nfseForm.tomador.municipio" class="input" />
+            </div>
+            <div>
+              <label class="label">UF</label>
+              <select x-model="nfseForm.tomador.uf" class="input">
+                <option value="">—</option>
+                <template x-for="uf in ufs" :key="uf"><option :value="uf" x-text="uf"></option></template>
+              </select>
+            </div>
+            <div>
+              <label class="label">Cód. IBGE (município)</label>
+              <input type="text" x-model="nfseForm.tomador.codigo_ibge" class="input" placeholder="ex: 1302603" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Serviço -->
+        <div class="card">
+          <h3 class="font-semibold text-primary mb-4">Serviço</h3>
+
+          <!-- Toggle construtora -->
+          <div class="flex items-center gap-3 mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <input type="checkbox" id="isConstrutora" x-model="nfseForm.is_construtora" class="w-4 h-4 accent-accent" />
+            <label for="isConstrutora" class="text-sm font-semibold text-yellow-800 cursor-pointer">
+              🏗️ Construtora / Incorporadora — ativar campos específicos de obra
+            </label>
+          </div>
+
+          <!-- Campos de obra (só aparecem se for construtora) -->
+          <div x-show="nfseForm.is_construtora" x-cloak class="mb-4 p-4 bg-orange-50 border border-orange-200 rounded-xl space-y-3">
+            <p class="text-xs font-bold text-orange-700 uppercase tracking-wider">Dados da Obra</p>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="label">Nº CEI / CNO da Obra</label>
+                <input type="text" x-model="nfseForm.obra_cei" class="input" placeholder="ex: 12.345.67890/00" />
+              </div>
+              <div>
+                <label class="label">Nº ART / RRT</label>
+                <input type="text" x-model="nfseForm.obra_art" class="input" placeholder="ex: ART-2026-0001234" />
+              </div>
+              <div>
+                <label class="label">Alvará / Licença de Obra</label>
+                <input type="text" x-model="nfseForm.obra_alvara" class="input" placeholder="Nº do alvará" />
+              </div>
+              <div>
+                <label class="label">Matrícula da Obra (CEF/INSS)</label>
+                <input type="text" x-model="nfseForm.obra_matricula" class="input" placeholder="Matrícula CEF" />
+              </div>
+              <div class="col-span-2">
+                <label class="label">Endereço da Obra</label>
+                <input type="text" x-model="nfseForm.obra_endereco" class="input" placeholder="Rua, número, bairro, cidade/UF" />
+              </div>
+              <div>
+                <label class="label">Retenção INSS (%)</label>
+                <select x-model="nfseForm.obra_inss_aliquota" class="input">
+                  <option value="0">Sem retenção</option>
+                  <option value="3.5">3,5% — Simples Nacional (Lei 12.546)</option>
+                  <option value="11">11% — Cessão de mão de obra (IN RFB 971)</option>
+                </select>
+              </div>
+              <div>
+                <label class="label">Valor Retenção INSS (R$)</label>
+                <input type="number" step="0.01" min="0"
+                  :value="nfseForm.obra_inss_aliquota > 0 ? (nfseForm.valor_servico * nfseForm.obra_inss_aliquota / 100).toFixed(2) : 0"
+                  @input="nfseForm.valor_inss = parseFloat($event.target.value) || 0; calcularNFSe()"
+                  x-model.number="nfseForm.valor_inss" class="input" />
+              </div>
+              <div>
+                <label class="label">Dedução Material (R$)</label>
+                <input type="number" step="0.01" min="0" x-model.number="nfseForm.valor_deducoes" class="input"
+                  placeholder="Deduções de material p/ base ISS" @input="calcularNFSe()" />
+                <p class="text-xs text-gray-400 mt-0.5">Reduz a base de cálculo do ISS</p>
+              </div>
+              <div>
+                <label class="label">IR Retido — 1,5% construção (R$)</label>
+                <input type="number" step="0.01" min="0"
+                  :value="nfseForm.obra_ir_auto ? (nfseForm.valor_servico * 0.015).toFixed(2) : nfseForm.valor_ir"
+                  x-model.number="nfseForm.valor_ir" class="input" @input="calcularNFSe()" />
+              </div>
+            </div>
+            <div class="p-3 bg-white rounded-lg border border-orange-200 text-xs text-orange-800">
+              <strong>Atenção:</strong> Para cessão de mão de obra em construção civil, a retenção de 11% de INSS
+              deve ser destacada na nota (IN RFB 971/2009, art. 112). Construtoras optantes pelo Simples Nacional
+              podem ter alíquota reduzida de 3,5% (Lei 12.546/2011).
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="label">Competência</label>
+              <input type="month" x-model="nfseForm.data_competencia" class="input" required />
+            </div>
+            <div>
+              <label class="label">Código LC 116 (serviço)</label>
+              <select x-model="nfseForm.codigo_servico_lc116" class="input" required>
+                <option value="">Selecione...</option>
+                <optgroup label="Construção Civil (7.x)">
+                  <option value="7.02">7.02 — Execução de obras de construção civil</option>
+                  <option value="7.04">7.04 — Demolição</option>
+                  <option value="7.05">7.05 — Reparação, conservação de edifícios</option>
+                  <option value="7.09">7.09 — Varrição, coleta, remoção de entulhos</option>
+                  <option value="7.10">7.10 — Limpeza de imóveis</option>
+                  <option value="7.19">7.19 — Instalação e montagem de estruturas metálicas</option>
+                </optgroup>
+                <optgroup label="Serviços Contábeis (17.x)">
+                  <option value="17.01">17.01 — Assessoria ou consultoria</option>
+                  <option value="17.19">17.19 — Contabilidade e auditoria</option>
+                  <option value="17.20">17.20 — Assessoria tributária e fiscal</option>
+                </optgroup>
+                <optgroup label="TI (1.x)">
+                  <option value="1.01">1.01 — Análise e desenvolvimento de sistemas</option>
+                  <option value="1.03">1.03 — Processamento, armazenamento de dados</option>
+                  <option value="1.05">1.05 — Licenciamento de software</option>
+                  <option value="1.07">1.07 — Suporte técnico em informática</option>
+                </optgroup>
+                <optgroup label="Saúde (4.x)">
+                  <option value="4.01">4.01 — Medicina e biomedicina</option>
+                  <option value="4.03">4.03 — Hospitais, clínicas e sanatórios</option>
+                </optgroup>
+                <optgroup label="Outros">
+                  <option value="outro">Outro (digitar manualmente)</option>
+                </optgroup>
+              </select>
+            </div>
+            <div x-show="nfseForm.codigo_servico_lc116 === 'outro'">
+              <label class="label">Código LC 116 (manual)</label>
+              <input type="text" x-model="nfseForm.codigo_servico_lc116_manual" class="input" placeholder="ex: 14.01" />
+            </div>
+            <div>
+              <label class="label">Código Municipal (opcional)</label>
+              <input type="text" x-model="nfseForm.codigo_servico_municipal" class="input" placeholder="ex: 0105" />
+            </div>
+            <div>
+              <label class="label">
+                Alíquota ISS (%)
+                <span x-show="clienteSelecionado?.nfse_aliquota_iss && !nfseForm.aliquota_iss"
+                      class="text-xs text-blue-500 ml-1 cursor-pointer"
+                      @click="nfseForm.aliquota_iss = clienteSelecionado.nfse_aliquota_iss; calcularNFSe()"
+                      x-text="'← usar ' + clienteSelecionado?.nfse_aliquota_iss + '% do cadastro'">
+                </span>
+              </label>
+              <input type="number" step="0.01" min="0" max="5"
+                     x-model.number="nfseForm.aliquota_iss"
+                     :placeholder="clienteSelecionado?.nfse_aliquota_iss || 5"
+                     class="input" @input="calcularNFSe()" />
+            </div>
+            <div class="col-span-2">
+              <label class="label">Discriminação dos Serviços</label>
+              <textarea x-model="nfseForm.discriminacao" class="input h-28 resize-none"
+                :placeholder="nfseForm.is_construtora
+                  ? 'Ex: Execução de obras de construção civil conforme contrato nº XX/2026, referente ao mês de junho/2026. Obra: [endereço]. CEI/CNO: [nº]. ART: [nº].'
+                  : 'Descreva os serviços prestados...'"
+                required></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- Valores -->
+        <div class="card">
+          <h3 class="font-semibold text-primary mb-4">Valores</h3>
+          <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <div>
+              <label class="label">Valor dos Serviços (R$)</label>
+              <input type="number" step="0.01" min="0.01" x-model.number="nfseForm.valor_servico" class="input" required @input="calcularNFSe()" />
+            </div>
+            <div>
+              <label class="label">Deduções (R$)</label>
+              <input type="number" step="0.01" min="0" x-model.number="nfseForm.valor_deducoes" class="input" @input="calcularNFSe()" />
+            </div>
+            <div>
+              <label class="label">ISS Retido?</label>
+              <select x-model="nfseForm.iss_retido" class="input">
+                <option :value="false">Não</option>
+                <option :value="true">Sim</option>
+              </select>
+            </div>
+            <div>
+              <label class="label">PIS (R$)</label>
+              <input type="number" step="0.01" min="0" x-model.number="nfseForm.valor_pis" class="input" @input="calcularNFSe()" />
+            </div>
+            <div>
+              <label class="label">COFINS (R$)</label>
+              <input type="number" step="0.01" min="0" x-model.number="nfseForm.valor_cofins" class="input" @input="calcularNFSe()" />
+            </div>
+            <div>
+              <label class="label">INSS (R$)</label>
+              <input type="number" step="0.01" min="0" x-model.number="nfseForm.valor_inss" class="input" @input="calcularNFSe()" />
+            </div>
+            <div>
+              <label class="label">IR (R$)</label>
+              <input type="number" step="0.01" min="0" x-model.number="nfseForm.valor_ir" class="input" @input="calcularNFSe()" />
+            </div>
+            <div>
+              <label class="label">CSLL (R$)</label>
+              <input type="number" step="0.01" min="0" x-model.number="nfseForm.valor_csll" class="input" @input="calcularNFSe()" />
+            </div>
+          </div>
+
+          <!-- Preview de valores -->
+          <div x-show="nfseForm.valor_servico > 0" class="mt-4 p-4 bg-cream rounded-xl border border-accent/30">
+            <div class="grid grid-cols-2 gap-1 text-sm">
+              <span class="text-gray-600">Valor dos Serviços:</span>
+              <span class="text-right font-medium" x-text="fmtBRL(nfseForm.valor_servico)"></span>
+              <span class="text-gray-600">(-) ISS (<span x-text="nfseForm.aliquota_iss || clienteSelecionado?.nfse_aliquota_iss || 5"></span>%):</span>
+              <span class="text-right text-red-600" x-text="fmtBRL(preview.iss)"></span>
+              <span class="text-gray-600">(-) Outras retenções:</span>
+              <span class="text-right text-red-600" x-text="fmtBRL(preview.outras)"></span>
+              <span class="font-bold text-primary border-t border-accent/30 pt-1 mt-1">Valor Líquido:</span>
+              <span class="text-right font-bold text-accent text-base border-t border-accent/30 pt-1 mt-1" x-text="fmtBRL(preview.liquido)"></span>
+            </div>
+          </div>
+        </div>
+
+        <div x-show="erroEmissao" class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-4" x-text="erroEmissao"></div>
+
+        <div class="flex gap-3">
+          <button type="submit" class="btn-primary px-8 py-3" :disabled="loading">
+            <span x-show="!loading">Emitir NFS-e</span>
+            <span x-show="loading">Emitindo...</span>
+          </button>
+          <button type="button" @click="goto('notas')" class="btn-secondary">Cancelar</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- ── EMITIR NF-e ── -->
+    <div x-show="page==='emitir-nfe'" class="p-6 max-w-3xl">
+      <div class="mb-6">
+        <h2 class="text-xl font-bold text-primary">Emitir NF-e</h2>
+        <p class="text-sm text-gray-500">Nota Fiscal Eletrônica — Modelo 55 (Produtos)</p>
+        <div class="mt-2 p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 text-xs rounded-lg">
+          ⚠️ NF-e em modo demonstração. Para produção, configure o certificado A1 do cliente e defina <code>MOCK_MODE=False</code>.
+        </div>
+      </div>
+
+      <form @submit.prevent="emitirNFe()" class="space-y-4">
+        <!-- Emitente -->
+        <div class="card">
+          <h3 class="font-semibold text-primary mb-4">Emitente</h3>
+          <div>
+            <label class="label">Cliente (Emitente)</label>
+            <select x-model="nfeForm.cliente_id" class="input" required>
+              <option value="">Selecione o cliente...</option>
+              <template x-for="c in clientes" :key="c.id">
+                <option :value="c.id" x-text="`${c.razao_social} — ${fmtCNPJ(c.cnpj)}`"></option>
+              </template>
+            </select>
+          </div>
+        </div>
+
+        <!-- Destinatário -->
+        <div class="card">
+          <h3 class="font-semibold text-primary mb-4">Destinatário</h3>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="col-span-2">
+              <label class="label">CPF / CNPJ</label>
+              <div class="flex gap-2">
+                <input type="text" x-model="nfeForm.tomador.cpf_cnpj" class="input" required />
+                <button type="button" @click="buscarCNPJ(nfeForm.tomador.cpf_cnpj, 'tomador_nfe')"
+                  class="flex-shrink-0 bg-primary hover:bg-primary-dark text-white text-xs font-semibold px-3 py-2 rounded-lg transition-colors whitespace-nowrap">
+                  🔍 Buscar RFB
+                </button>
+              </div>
+            </div>
+            <div>
+              <label class="label">Razão Social / Nome</label>
+              <input type="text" x-model="nfeForm.tomador.razao_social" class="input" required />
+            </div>
+            <div>
+              <label class="label">E-mail</label>
+              <input type="email" x-model="nfeForm.tomador.email" class="input" />
+            </div>
+            <div>
+              <label class="label">UF</label>
+              <select x-model="nfeForm.tomador.uf" class="input">
+                <option value="">—</option>
+                <template x-for="uf in ufs" :key="uf"><option :value="uf" x-text="uf"></option></template>
+              </select>
+            </div>
+            <div>
+              <label class="label">Município</label>
+              <input type="text" x-model="nfeForm.tomador.municipio" class="input" />
+            </div>
+            <div>
+              <label class="label">CEP</label>
+              <input type="text" x-model="nfeForm.tomador.cep" class="input" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Operação -->
+        <div class="card">
+          <h3 class="font-semibold text-primary mb-4">Operação</h3>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="label">Natureza da Operação</label>
+              <input type="text" x-model="nfeForm.natureza_operacao" class="input" required />
+            </div>
+            <div>
+              <label class="label">Competência</label>
+              <input type="month" x-model="nfeForm.data_competencia" class="input" required />
+            </div>
+          </div>
+        </div>
+
+        <!-- Itens -->
+        <div class="card">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-primary">Itens da Nota</h3>
+            <button type="button" @click="addItemNFe()" class="btn-secondary text-xs px-3 py-1.5">+ Adicionar Item</button>
+          </div>
+
+          <div class="space-y-3">
+            <template x-for="(item, idx) in nfeForm.itens" :key="idx">
+              <div class="border border-gray-200 rounded-lg p-3">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="text-xs font-semibold text-gray-500">Item <span x-text="idx+1"></span></span>
+                  <button type="button" @click="nfeForm.itens.splice(idx,1)" class="text-red-400 hover:text-red-600 text-xs" x-show="nfeForm.itens.length > 1">✕ Remover</button>
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  <div class="col-span-2">
+                    <label class="label">Descrição do Produto</label>
+                    <input type="text" x-model="item.descricao" class="input" required />
+                  </div>
+                  <div>
+                    <label class="label">Cód. Produto</label>
+                    <input type="text" x-model="item.codigo_produto" class="input" placeholder="Opcional" />
+                  </div>
+                  <div>
+                    <label class="label">NCM</label>
+                    <input type="text" x-model="item.ncm" class="input" placeholder="00000000" required />
+                  </div>
+                  <div>
+                    <label class="label">CFOP</label>
+                    <input type="text" x-model="item.cfop" class="input" placeholder="5102" required />
+                  </div>
+                  <div>
+                    <label class="label">Unidade</label>
+                    <input type="text" x-model="item.unidade" class="input" placeholder="UN" />
+                  </div>
+                  <div>
+                    <label class="label">Quantidade</label>
+                    <input type="number" step="0.001" min="0.001" x-model.number="item.quantidade" class="input" />
+                  </div>
+                  <div>
+                    <label class="label">Valor Unitário (R$)</label>
+                    <input type="number" step="0.01" min="0.01" x-model.number="item.valor_unitario" class="input" />
+                  </div>
+                  <div>
+                    <label class="label">ICMS (%)</label>
+                    <input type="number" step="0.01" min="0" x-model.number="item.aliquota_icms" class="input" />
+                  </div>
+                  <div class="flex items-end">
+                    <div class="p-2 bg-cream rounded-lg text-xs w-full">
+                      <span class="text-gray-500">Total:</span>
+                      <span class="font-bold text-accent ml-1" x-text="fmtBRL(item.quantidade * item.valor_unitario)"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <div x-show="nfeForm.itens.length" class="mt-3 p-3 bg-cream rounded-lg flex justify-between text-sm">
+            <span class="font-semibold text-primary">Total da NF-e:</span>
+            <span class="font-bold text-accent" x-text="fmtBRL(nfeForm.itens.reduce((s,i)=>s+(i.quantidade*i.valor_unitario||0),0))"></span>
+          </div>
+        </div>
+
+        <div x-show="erroEmissao" class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-4" x-text="erroEmissao"></div>
+
+        <div class="flex gap-3">
+          <button type="submit" class="btn-primary px-8 py-3" :disabled="loading">
+            <span x-show="!loading">Emitir NF-e</span>
+            <span x-show="loading">Emitindo...</span>
+          </button>
+          <button type="button" @click="goto('notas')" class="btn-secondary">Cancelar</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- ── CLIENTES ── -->
+    <div x-show="page==='clientes'" class="p-6">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-xl font-bold text-primary">Clientes</h2>
+          <p class="text-sm text-gray-500">CNPJs gerenciados pelo escritório</p>
+        </div>
+        <button @click="abrirModalCliente(null)" class="btn-primary">+ Novo Cliente</button>
+      </div>
+
+      <div x-show="loadingPage" class="flex justify-center py-10">
+        <div class="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin"></div>
+      </div>
+
+      <div class="grid gap-3" x-show="!loadingPage">
+        <template x-for="c in clientes" :key="c.id">
+          <div class="card flex items-center justify-between hover:shadow-md transition-shadow">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
+                     x-text="c.razao_social?.[0]?.toUpperCase()"></div>
+                <div class="min-w-0">
+                  <p class="font-semibold text-gray-800 truncate" x-text="c.razao_social"></p>
+                  <p class="text-xs text-gray-500" x-text="`${fmtCNPJ(c.cnpj)} · ${c.municipio || '—'}/${c.uf || '—'}`"></p>
+                </div>
+              </div>
+            </div>
+            <div class="flex items-center gap-4 ml-4 flex-shrink-0">
+              <div class="hidden md:flex gap-2 text-xs">
+                <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-600" x-text="c.regime_tributario || '—'"></span>
+                <span class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-mono" x-text="c.nfse_provider"></span>
+              </div>
+              <div class="flex gap-1">
+                <button @click="abrirModalCliente(c)" class="btn-secondary text-xs px-3 py-1.5">Editar</button>
+                <button @click="emitirParaCliente(c)" class="btn-primary text-xs px-3 py-1.5">Emitir NFS-e</button>
+              </div>
+            </div>
+          </div>
+        </template>
+        <div x-show="!clientes.length" class="card text-center py-12 text-gray-400">
+          <p class="text-lg mb-2">Nenhum cliente cadastrado.</p>
+          <button @click="abrirModalCliente(null)" class="btn-primary mt-2">Cadastrar primeiro cliente</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CONTRATOS RECORRENTES ── -->
+    <div x-show="page==='contratos'" class="p-6">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-xl font-bold text-primary">Contratos Recorrentes</h2>
+          <p class="text-sm text-gray-500">Faturamento fixo mensal — NFS-e e NF-e agendadas</p>
+        </div>
+        <button @click="abrirModalContrato(null)" class="btn-primary">+ Novo Contrato</button>
+      </div>
+
+      <!-- Fila do dia -->
+      <div x-show="contratosNaFila?.length > 0" class="mb-5 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3">
+        <svg class="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        <div class="flex-1">
+          <p class="text-sm font-bold text-amber-800">
+            <span x-text="contratosNaFila?.length"></span> contrato(s) vencem hoje e aguardam sua aprovação
+          </p>
+          <div class="mt-2 space-y-1">
+            <template x-for="cf in contratosNaFila" :key="cf.id">
+              <div class="flex items-center justify-between bg-white rounded-lg px-3 py-2 text-sm">
+                <span><strong x-text="cf.cliente_razao_social"></strong> — <span x-text="cf.descricao"></span></span>
+                <div class="flex items-center gap-2">
+                  <span class="font-bold text-green-700" x-text="fmtBRL(cf.valor)"></span>
+                  <button @click="emitirContrato(cf.id)" class="btn-primary text-xs px-3 py-1" :disabled="loading">Emitir</button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filtros -->
+      <div class="flex gap-3 mb-4">
+        <select x-model="filtroContratos.ativo" class="input max-w-[160px]" @change="carregarContratos()">
+          <option value="">Todos</option>
+          <option value="true">Ativos</option>
+          <option value="false">Inativos</option>
+        </select>
+        <select x-model="filtroContratos.cliente_id" class="input max-w-[260px]" @change="carregarContratos()">
+          <option value="">Todos os clientes</option>
+          <template x-for="c in clientes" :key="c.id">
+            <option :value="c.id" x-text="c.razao_social"></option>
+          </template>
+        </select>
+      </div>
+
+      <!-- Lista -->
+      <div x-show="loadingPage" class="flex justify-center py-10">
+        <div class="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin"></div>
+      </div>
+
+      <div class="space-y-3" x-show="!loadingPage">
+        <template x-for="c in contratos" :key="c.id">
+          <div class="card hover:shadow-md transition-shadow">
+            <div class="flex items-start justify-between gap-4">
+              <!-- Info principal -->
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap mb-1">
+                  <span :class="c.ativo ? 'badge-emitida' : 'badge-cancelada'" x-text="c.ativo ? 'Ativo' : 'Inativo'"></span>
+                  <span class="badge-nfse" x-text="c.tipo_nota?.toUpperCase()"></span>
+                  <span x-show="c.modo_emissao==='automatico'" class="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">⚡ Auto</span>
+                  <span x-show="c.modo_emissao==='fila'" class="inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">👤 Fila</span>
+                  <span x-show="c.gerar_boleto" class="inline-flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">💳 Boleto</span>
+                  <span x-show="c.vence_hoje && c.ativo" class="inline-flex items-center gap-1 text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold animate-pulse">⏰ Hoje</span>
+                </div>
+                <p class="font-semibold text-gray-800" x-text="c.descricao"></p>
+                <p class="text-sm text-gray-500 mt-0.5">
+                  <span class="font-medium text-gray-700" x-text="c.cliente_razao_social"></span>
+                  · Todo dia <strong x-text="c.dia_emissao"></strong>
+                  · <span x-text="c.total_emitido"></span> emitida(s)
+                </p>
+                <p x-show="c.tomador_razao_social" class="text-xs text-gray-400 mt-0.5">
+                  Tomador: <span x-text="c.tomador_razao_social"></span>
+                  <span x-show="c.tomador_municipio"> · <span x-text="c.tomador_municipio"></span>/<span x-text="c.tomador_uf"></span></span>
+                </p>
+              </div>
+              <!-- Valor e ações -->
+              <div class="flex flex-col items-end gap-2 flex-shrink-0">
+                <p class="text-xl font-bold text-accent" x-text="fmtBRL(c.valor)"></p>
+                <p class="text-xs text-gray-400">Próxima: <span x-text="fmtData(c.proxima_emissao)"></span></p>
+                <div class="flex gap-1 mt-1">
+                  <button x-show="c.ativo" @click="emitirContrato(c.id)"
+                          class="btn-primary text-xs px-3 py-1.5" :disabled="loading">
+                    Emitir agora
+                  </button>
+                  <button @click="abrirModalContrato(c)"
+                          class="btn-secondary text-xs px-3 py-1.5">Editar</button>
+                  <button x-show="c.ativo" @click="toggleContratoAtivo(c)"
+                          class="btn-secondary text-xs px-3 py-1.5 text-red-600">Pausar</button>
+                  <button x-show="!c.ativo" @click="toggleContratoAtivo(c)"
+                          class="btn-secondary text-xs px-3 py-1.5 text-green-600">Reativar</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+        <div x-show="!contratos.length && !loadingPage" class="card text-center py-12 text-gray-400">
+          <p class="text-4xl mb-3">📋</p>
+          <p class="text-lg font-medium mb-1">Nenhum contrato cadastrado</p>
+          <p class="text-sm mb-4">Cadastre contratos para automatizar emissões mensais</p>
+          <button @click="abrirModalContrato(null)" class="btn-primary">Criar primeiro contrato</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CONFIGURAÇÕES ── -->
+    <div x-show="page==='configuracoes'" class="p-6 max-w-2xl">
+      <div class="mb-6">
+        <h2 class="text-xl font-bold text-primary">Configurações</h2>
+        <p class="text-sm text-gray-500">Dados do escritório e preferências</p>
+      </div>
+
+      <div class="space-y-4">
+        <div class="card">
+          <h3 class="font-semibold text-primary mb-4">Dados do Escritório</h3>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="col-span-2">
+              <label class="label">Nome do Escritório</label>
+              <input type="text" x-model="configForm.nome" class="input" />
+            </div>
+            <div>
+              <label class="label">CNPJ</label>
+              <input type="text" :value="session.cnpj || '—'" class="input bg-gray-50" disabled />
+            </div>
+            <div>
+              <label class="label">CRC</label>
+              <input type="text" x-model="configForm.crc" class="input" placeholder="AM-001234/O-8" />
+            </div>
+            <div>
+              <label class="label">E-mail</label>
+              <input type="email" x-model="configForm.email" class="input" />
+            </div>
+            <div>
+              <label class="label">Telefone</label>
+              <input type="text" x-model="configForm.telefone" class="input" />
+            </div>
+          </div>
+          <div class="mt-4">
+            <button class="btn-primary" @click="showToast('Funcionalidade de atualização disponível em breve.')">Salvar Alterações</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="font-semibold text-primary mb-4">Alterar Senha</h3>
+          <div class="space-y-3 max-w-sm">
+            <div>
+              <label class="label">Senha Atual</label>
+              <input type="password" class="input" placeholder="••••••••" />
+            </div>
+            <div>
+              <label class="label">Nova Senha</label>
+              <input type="password" class="input" placeholder="••••••••" />
+            </div>
+            <div>
+              <label class="label">Confirmar Nova Senha</label>
+              <input type="password" class="input" placeholder="••••••••" />
+            </div>
+            <button class="btn-primary" @click="showToast('Funcionalidade disponível em breve.')">Atualizar Senha</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="font-semibold text-primary mb-2">Plano Atual</h3>
+          <div class="flex items-center justify-between">
+            <div>
+              <span class="text-2xl font-bold text-accent uppercase" x-text="session.plano"></span>
+              <p class="text-sm text-gray-500 mt-1" x-show="dash">
+                <span x-text="dash?.notas_mes || 0"></span> / <span x-text="dash?.limite_mes"></span> notas emitidas este mês
+              </p>
+            </div>
+            <button @click="goto('planos')" class="btn-primary">Ver Planos</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── PLANOS ── -->
+    <div x-show="page==='planos'" class="p-6">
+      <div class="mb-6">
+        <h2 class="text-xl font-bold text-primary">Planos & Upgrade</h2>
+        <p class="text-sm text-gray-500">Escolha o plano ideal para o seu escritório</p>
+      </div>
+
+      <div class="mb-6 p-4 bg-accent/10 border border-accent/30 rounded-xl flex items-center gap-3">
+        <svg class="w-6 h-6 text-accent flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        <div>
+          <p class="font-semibold text-primary text-sm">Você está no período de teste gratuito de 7 dias</p>
+          <p class="text-xs text-gray-500">Escolha um plano antes do vencimento para não perder o acesso.</p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+        <!-- Starter -->
+        <div class="card border-2 border-gray-200 hover:border-accent transition-colors relative">
+          <p class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">Starter</p>
+          <p class="text-3xl font-bold text-primary">R$ 97<span class="text-base font-normal text-gray-400">/mês</span></p>
+          <p class="text-sm text-gray-500 mt-1 mb-4">Ideal para escritórios pequenos</p>
+          <ul class="space-y-2 text-sm text-gray-600 mb-6">
+            <li class="flex items-center gap-2"><span class="text-green-500 font-bold">✓</span> Até <strong>100 notas/mês</strong></li>
+            <li class="flex items-center gap-2"><span class="text-green-500 font-bold">✓</span> NFS-e + NF-e (mock)</li>
+            <li class="flex items-center gap-2"><span class="text-green-500 font-bold">✓</span> Integração NFe.io</li>
+            <li class="flex items-center gap-2"><span class="text-green-500 font-bold">✓</span> Download PDF + XML</li>
+            <li class="flex items-center gap-2"><span class="text-green-500 font-bold">✓</span> 1 usuário</li>
+          </ul>
+          <button class="w-full btn-secondary" @click="showToast('Em breve: integração com pagamento.')">Assinar Starter</button>
+        </div>
+
+        <!-- Pro -->
+        <div class="card border-2 border-accent relative shadow-lg">
+          <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-accent text-white text-xs font-bold px-3 py-1 rounded-full">MAIS POPULAR</div>
+          <p class="text-xs font-bold text-accent uppercase tracking-widest mb-2">Pro</p>
+          <p class="text-3xl font-bold text-primary">R$ 247<span class="text-base font-normal text-gray-400">/mês</span></p>
+          <p class="text-sm text-gray-500 mt-1 mb-4">Para escritórios em crescimento</p>
+          <ul class="space-y-2 text-sm text-gray-600 mb-6">
+            <li class="flex items-center gap-2"><span class="text-green-500 font-bold">✓</span> Até <strong>500 notas/mês</strong></li>
+            <li class="flex items-center gap-2"><span class="text-green-500 font-bold">✓</span> NFS-e + NF-e (real + mock)</li>
+            <li class="flex items-center gap-2"><span class="text-green-500 font-bold">✓</span> NFe.io + NFS-e Nacional</li>
+            <li class="flex items-center gap-2"><span class="text-green-500 font-bold">✓</span> Download PDF + XML</li>
+            <li class="flex items-center gap-2"><span class="text-green-500 font-bold">✓</span> Até 3 usuários</li>
+            <li class="flex items-center gap-2"><span class="text-green-500 font-bold">✓</span> Suporte prioritário</li>
+          </ul>
+          <button class="w-full btn-primary" @click="showToast('Em breve: integração com pagamento.')">Assinar Pro</button>
+        </div>
+
+        <!-- Enterprise -->
+        <div class="card border-2 border-primary hover:border-accent transition-colors relative">
+          <p class="text-xs font-bold text-primary uppercase tracking-widest mb-2">Enterprise</p>
+          <p class="text-3xl font-bold text-primary">Sob consulta</p>
+          <p class="text-sm text-gray-500 mt-1 mb-4">Para grandes escritórios</p>
+          <ul class="space-y-2 text-sm text-gray-600 mb-6">
+            <li class="flex items-center gap-2"><span class="text-green-500 font-bold">✓</span> <strong>Notas ilimitadas</strong></li>
+            <li class="flex items-center gap-2"><span class="text-green-500 font-bold">✓</span> Todos os provedores</li>
+            <li class="flex items-center gap-2"><span class="text-green-500 font-bold">✓</span> White-label (marca própria)</li>
+            <li class="flex items-center gap-2"><span class="text-green-500 font-bold">✓</span> Usuários ilimitados</li>
+            <li class="flex items-center gap-2"><span class="text-green-500 font-bold">✓</span> API dedicada</li>
+            <li class="flex items-center gap-2"><span class="text-green-500 font-bold">✓</span> SLA contratual</li>
+          </ul>
+          <button class="w-full btn-secondary" @click="showToast('Entre em contato: contato@emissor.com.br')">Falar com vendas</button>
+        </div>
+      </div>
+
+      <p class="text-center text-xs text-gray-400 mt-6">
+        Todos os planos incluem 7 dias de teste gratuito · Cancele a qualquer momento · Sem taxas ocultas
+      </p>
+    </div>
+
+    <!-- ── CALENDÁRIO FISCAL ── -->
+    <div x-show="page==='calendario'" class="p-6 space-y-5">
+      <!-- Header -->
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 class="text-xl font-bold text-primary">Calendário Fiscal</h2>
+          <p class="text-sm text-gray-500 mt-0.5">Obrigações federais, estaduais (todos os estados) e municipais dos seus clientes</p>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <select x-model="calFiltroCliente" @change="carregarCalendario()" class="input text-sm" style="width:220px">
+            <option value="">Todos os clientes</option>
+            <template x-for="c in clientes" :key="c.id">
+              <option :value="c.id" x-text="c.razao_social"></option>
+            </template>
+          </select>
+          <div class="flex items-center gap-1 bg-white border border-gray-200 rounded-lg p-1">
+            <button @click="calMesAnterior()" class="px-2 py-1 rounded hover:bg-gray-100 text-gray-600 font-bold">‹</button>
+            <span class="text-sm font-semibold text-primary px-2 min-w-[130px] text-center" x-text="calMesNome()"></span>
+            <button @click="calMesSeguinte()" class="px-2 py-1 rounded hover:bg-gray-100 text-gray-600 font-bold">›</button>
+          </div>
+          <button @click="calHoje()" class="btn-secondary text-sm">Hoje</button>
+        </div>
+      </div>
+
+      <!-- Legenda -->
+      <div class="flex gap-4 flex-wrap text-xs">
+        <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full inline-block" style="background:#013957"></span> Federal/RFB</span>
+        <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full inline-block" style="background:#0891b2"></span> Previdenciário/INSS/FGTS</span>
+        <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full inline-block" style="background:#16a34a"></span> Estadual/ICMS</span>
+        <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full inline-block" style="background:#7c3aed"></span> Municipal/ISS</span>
+        <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full inline-block" style="background:#64748b"></span> Declaração/Acessória</span>
+      </div>
+
+      <!-- Layout: grid + lista -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+        <!-- Calendário grid -->
+        <div class="lg:col-span-2 card p-4">
+          <!-- Cabeçalho dias da semana -->
+          <div class="grid grid-cols-7 mb-2">
+            <template x-for="d in ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb']" :key="d">
+              <div class="text-center text-xs font-semibold text-gray-400 py-1" x-text="d"></div>
+            </template>
+          </div>
+          <!-- Grid de dias -->
+          <div class="grid grid-cols-7 gap-px bg-gray-200 rounded-lg overflow-hidden">
+            <!-- Células vazias antes do dia 1 -->
+            <template x-for="_ in calPrimeiroDiaSemana()" :key="'v'+_">
+              <div class="bg-gray-50 min-h-[80px] p-1"></div>
+            </template>
+            <!-- Dias do mês -->
+            <template x-for="dia in calDiasDoMes()" :key="dia">
+              <div :class="[
+                'bg-white min-h-[80px] p-1.5 cursor-pointer transition-colors',
+                calEHoje(dia) ? 'ring-2 ring-accent ring-inset' : '',
+                calEventosDia(dia).length ? 'hover:bg-amber-50' : 'hover:bg-gray-50',
+              ]" @click="calSelecionarDia(dia)">
+                <div :class="['text-xs font-semibold mb-1 w-5 h-5 flex items-center justify-center rounded-full',
+                   calEHoje(dia) ? 'bg-accent text-white' : 'text-gray-500']"
+                   x-text="dia"></div>
+                <template x-for="(ev, idx) in calEventosDia(dia).slice(0,3)" :key="idx">
+                  <div class="text-xs rounded px-1 py-0.5 mb-0.5 text-white truncate leading-tight"
+                       :style="'background:' + ev.cor"
+                       :title="ev.descricao"
+                       x-text="ev.descricao.split('—')[0].split('(')[0].trim().substring(0,22)"></div>
+                </template>
+                <div x-show="calEventosDia(dia).length > 3"
+                     class="text-xs text-gray-400 font-semibold"
+                     x-text="'+ ' + (calEventosDia(dia).length - 3) + ' mais'"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Painel lateral: detalhe do dia ou próximos vencimentos -->
+        <div class="space-y-4">
+
+          <!-- Dia selecionado -->
+          <div x-show="calDiaSelecionado" x-cloak class="card">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-semibold text-primary text-sm"
+                  x-text="calDiaSelecionado ? new Date(calAno, calMes-1, calDiaSelecionado).toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'}) : ''"></h3>
+              <button @click="calDiaSelecionado=null" class="text-gray-400 hover:text-gray-600 text-lg font-bold leading-none">✕</button>
+            </div>
+            <div class="space-y-2">
+              <template x-for="ev in calEventosDia(calDiaSelecionado)" :key="ev.descricao">
+                <div class="rounded-lg p-3 border-l-4" :style="'border-color:' + ev.cor + ';background:' + ev.cor + '12'">
+                  <div class="text-xs font-bold" :style="'color:' + ev.cor" x-text="ev.descricao"></div>
+                  <div class="text-xs text-gray-600 mt-0.5" x-text="ev.detalhes"></div>
+                  <div x-show="ev.clientes && ev.clientes.length" class="mt-1.5 flex flex-wrap gap-1">
+                    <template x-for="c in ev.clientes" :key="c.id">
+                      <span class="text-xs bg-gray-100 text-gray-700 rounded px-1.5 py-0.5" x-text="c.nome.substring(0,25)"></span>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Próximos vencimentos (30 dias) -->
+          <div class="card">
+            <h3 class="font-semibold text-primary text-sm mb-3">Próximos 30 dias</h3>
+            <div x-show="!calProximos.length" class="text-xs text-gray-400 py-2 text-center">Sem vencimentos nos próximos dias</div>
+            <div class="space-y-2 max-h-96 overflow-y-auto pr-1">
+              <template x-for="ev in calProximos" :key="ev.data + ev.descricao">
+                <div class="flex gap-2.5 items-start">
+                  <div class="text-center min-w-[40px]">
+                    <div class="text-xs font-bold text-gray-700"
+                         x-text="new Date(ev.data + 'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'short'}).replace('.','')"></div>
+                  </div>
+                  <div class="flex-1 rounded-lg px-2 py-1.5 border-l-4" :style="'border-color:' + ev.cor + ';background:' + ev.cor + '12'">
+                    <div class="text-xs font-semibold" :style="'color:' + ev.cor" x-text="ev.descricao.split('—')[0].split('(')[0].trim()"></div>
+                    <div x-show="ev.clientes && ev.clientes.length" class="text-xs text-gray-500 mt-0.5"
+                         x-text="ev.clientes.map(c=>c.nome.split(' ')[0]).join(', ')"></div>
+                  </div>
+                  <!-- Urgência -->
+                  <div :class="[
+                    'text-xs font-bold rounded px-1.5 py-1 min-w-[30px] text-center self-center',
+                    calDiasRestantes(ev.data) <= 0 ? 'bg-red-100 text-red-600' :
+                    calDiasRestantes(ev.data) <= 3 ? 'bg-orange-100 text-orange-600' :
+                    calDiasRestantes(ev.data) <= 7 ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-500'
+                  ]" x-text="calDiasRestantes(ev.data) <= 0 ? 'HOJE' : calDiasRestantes(ev.data) + 'd'"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ── DOCUMENTOS RECEBIDOS ── -->
+    <div x-show="page==='recebidas'" class="p-6 space-y-6">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-xl font-bold text-primary">Documentos Recebidos</h2>
+          <p class="text-sm text-gray-500 mt-0.5">NF-e, NFC-e (cupom) e NFS-e recebidos pelos seus clientes — monitoramento automático e upload manual</p>
+        </div>
+        <div class="flex gap-2">
+          <button @click="abrirModalUploadXML()" class="btn-secondary text-sm">
+            📎 Upload XML
+          </button>
+          <button @click="sincronizarTodos()" :disabled="sincronizando" class="btn-primary text-sm">
+            <span x-show="!sincronizando">🔄 Sincronizar Agora</span>
+            <span x-show="sincronizando" x-cloak>Sincronizando...</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- KPIs -->
+      <div class="grid grid-cols-4 gap-4" x-show="dashRecebidos" x-cloak>
+        <div class="card text-center">
+          <div class="text-3xl font-bold text-primary" x-text="dashRecebidos?.total_geral ?? 0"></div>
+          <div class="text-xs text-gray-500 mt-1">Total de Documentos</div>
+        </div>
+        <div class="card text-center">
+          <div class="text-3xl font-bold text-blue-600" x-text="dashRecebidos?.por_tipo?.nfe?.qtd ?? 0"></div>
+          <div class="text-xs text-gray-500 mt-1">NF-e no Mês</div>
+          <div class="text-xs font-semibold text-blue-500 mt-0.5"
+               x-text="'R$ ' + (dashRecebidos?.por_tipo?.nfe?.valor ?? 0).toLocaleString('pt-BR', {minimumFractionDigits:2})"></div>
+        </div>
+        <div class="card text-center">
+          <div class="text-3xl font-bold text-purple-600" x-text="(dashRecebidos?.por_tipo?.nfse?.qtd ?? 0)"></div>
+          <div class="text-xs text-gray-500 mt-1">NFS-e no Mês</div>
+          <div class="text-xs font-semibold text-purple-500 mt-0.5"
+               x-text="'R$ ' + (dashRecebidos?.por_tipo?.nfse?.valor ?? 0).toLocaleString('pt-BR', {minimumFractionDigits:2})"></div>
+        </div>
+        <div class="card text-center">
+          <div class="text-3xl font-bold text-amber-500" x-text="dashRecebidos?.pendentes_manifestacao_nfe ?? 0"></div>
+          <div class="text-xs text-gray-500 mt-1">NF-e Aguardando Manifestação</div>
+        </div>
+      </div>
+
+      <!-- Como funciona -->
+      <div class="card bg-blue-50 border border-blue-100">
+        <div class="flex items-start gap-3">
+          <div class="text-2xl">ℹ️</div>
+          <div>
+            <p class="text-sm font-semibold text-blue-800 mb-1">Como funciona o monitoramento</p>
+            <ul class="text-xs text-blue-700 space-y-1 list-disc list-inside">
+              <li><strong>NF-e automático (NFe.io):</strong> clientes com NFe.io configurado têm notas importadas automaticamente</li>
+              <li><strong>NF-e automático (SEFAZ DF-e):</strong> clientes com certificado A1 configurado recebem via Distribuição DF-e da SEFAZ</li>
+              <li><strong>NFC-e (cupom):</strong> incluído no monitoramento — modelo 65</li>
+              <li><strong>NFS-e:</strong> via NFe.io ou upload manual de XML do portal municipal</li>
+              <li><strong>Manifestação do destinatário:</strong> confirme ou desconheça as NF-e diretamente aqui</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filtros -->
+      <div class="card">
+        <div class="grid grid-cols-4 gap-3">
+          <div>
+            <label class="label">Cliente</label>
+            <select x-model="filtroRecebidos.cliente_id" class="input">
+              <option value="">Todos</option>
+              <template x-for="c in clientes" :key="c.id">
+                <option :value="c.id" x-text="c.razao_social"></option>
+              </template>
+            </select>
+          </div>
+          <div>
+            <label class="label">Tipo</label>
+            <select x-model="filtroRecebidos.tipo" class="input">
+              <option value="">Todos</option>
+              <option value="nfe">NF-e (Produto)</option>
+              <option value="nfce">NFC-e (Cupom)</option>
+              <option value="nfse">NFS-e (Serviço)</option>
+            </select>
+          </div>
+          <div>
+            <label class="label">Origem</label>
+            <select x-model="filtroRecebidos.origem" class="input">
+              <option value="">Todas</option>
+              <option value="manual">Upload Manual</option>
+              <option value="sefaz_dfe">SEFAZ DF-e</option>
+              <option value="nfeio">NFe.io</option>
+            </select>
+          </div>
+          <div>
+            <label class="label">Mês</label>
+            <input type="month" x-model="filtroRecebidos.mes" class="input" />
+          </div>
+        </div>
+        <button @click="carregarRecebidos()" class="btn-primary mt-3 text-sm">Filtrar</button>
+      </div>
+
+      <!-- Tabela -->
+      <div class="card p-0 overflow-hidden">
+        <div x-show="!docsRecebidos.length" class="p-8 text-center text-gray-400">
+          <div class="text-4xl mb-2">📭</div>
+          <p class="font-medium">Nenhum documento recebido</p>
+          <p class="text-xs mt-1">Clique em "Sincronizar Agora" ou faça upload de um XML</p>
+        </div>
+        <table x-show="docsRecebidos.length" class="w-full text-sm">
+          <thead>
+            <tr class="bg-gray-50 border-b">
+              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Tipo</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Emitente / Fornecedor</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Destinatário</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Data</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Valor Total</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Origem</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Manifestação</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Ações</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            <template x-for="d in docsRecebidos" :key="d.id">
+              <tr class="hover:bg-gray-50 transition-colors">
+                <td class="px-4 py-3">
+                  <span :class="d.tipo === 'nfe' ? 'badge-nfe' : d.tipo === 'nfce' ? 'badge-substituida' : 'badge-nfse'"
+                        x-text="d.tipo === 'nfe' ? 'NF-e' : d.tipo === 'nfce' ? 'NFC-e' : 'NFS-e'"></span>
+                </td>
+                <td class="px-4 py-3">
+                  <div class="font-medium text-gray-900 text-xs" x-text="d.emitente_razao_social || '—'"></div>
+                  <div class="text-gray-400 text-xs" x-text="d.emitente_cnpj || ''"></div>
+                </td>
+                <td class="px-4 py-3">
+                  <div class="text-xs text-gray-700" x-text="d.cliente_razao_social || '—'"></div>
+                  <div class="text-gray-400 text-xs" x-text="d.cliente_cnpj || ''"></div>
+                </td>
+                <td class="px-4 py-3 text-xs text-gray-600"
+                    x-text="d.data_emissao ? new Date(d.data_emissao).toLocaleDateString('pt-BR') : '—'"></td>
+                <td class="px-4 py-3 text-right font-semibold text-gray-800 text-xs"
+                    x-text="d.valor_total ? 'R$ ' + d.valor_total.toLocaleString('pt-BR', {minimumFractionDigits:2}) : '—'"></td>
+                <td class="px-4 py-3">
+                  <span :class="d.origem === 'manual' ? 'badge-manual' : d.origem === 'nfeio' ? 'badge-nfse' : 'badge-emitida'"
+                        x-text="d.origem === 'manual' ? 'Manual' : d.origem === 'nfeio' ? 'NFe.io' : 'SEFAZ'"></span>
+                </td>
+                <td class="px-4 py-3">
+                  <template x-if="d.tipo === 'nfe' || d.tipo === 'nfce'">
+                    <div>
+                      <span :class="{
+                        'badge-pendente': d.status_manifestacao === 'pendente',
+                        'badge-emitida': d.status_manifestacao === 'confirmacao_operacao',
+                        'badge-cancelada': d.status_manifestacao === 'desconhecimento' || d.status_manifestacao === 'operacao_nao_realizada',
+                        'badge-recebida': d.status_manifestacao === 'ciencia_operacao',
+                      }" x-text="{
+                        pendente: 'Pendente',
+                        ciencia_operacao: 'Ciente',
+                        confirmacao_operacao: 'Confirmada',
+                        desconhecimento: 'Desconhecida',
+                        operacao_nao_realizada: 'Op. Não Realizada',
+                      }[d.status_manifestacao] || d.status_manifestacao"></span>
+                      <button x-show="d.status_manifestacao === 'pendente'" @click="abrirManifestar(d)"
+                        class="ml-1 text-xs text-accent hover:underline">Manifestar</button>
+                    </div>
+                  </template>
+                  <template x-if="d.tipo === 'nfse'">
+                    <span class="badge-recebida">Recebida</span>
+                  </template>
+                </td>
+                <td class="px-4 py-3">
+                  <div class="flex gap-1">
+                    <button x-show="d.xml_content || d.chave_acesso"
+                      @click="baixarXMLRecebido(d.id)"
+                      class="text-xs text-blue-600 hover:underline" title="Baixar XML">XML</button>
+                    <button @click="excluirRecebido(d.id)"
+                      class="text-xs text-red-500 hover:underline ml-1" title="Excluir">🗑</button>
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ── MODAL RELATÓRIO MENSAL ── -->
+<div x-show="modalRelatorio.show" x-cloak
+     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-lg font-bold text-primary">📊 Relatório de Apuração</h3>
+      <button @click="modalRelatorio.show=false" class="text-gray-400 hover:text-gray-600 text-xl font-bold">✕</button>
+    </div>
+    <div class="space-y-4">
+      <div>
+        <label class="label">Cliente</label>
+        <select x-model="modalRelatorio.cliente_id" class="input" required>
+          <option value="">Selecione o cliente...</option>
+          <template x-for="c in clientes" :key="c.id">
+            <option :value="c.id" x-text="c.razao_social"></option>
+          </template>
+        </select>
+      </div>
+      <div>
+        <label class="label">Competência (mês/ano)</label>
+        <input type="month" x-model="modalRelatorio.competencia" class="input" />
+      </div>
+      <p class="text-xs text-gray-400">Gera PDF consolidado com todas as notas emitidas, totais de impostos e retenções.</p>
+    </div>
+    <div class="flex gap-3 mt-5">
+      <button @click="modalRelatorio.show=false" class="btn-secondary flex-1">Cancelar</button>
+      <button @click="baixarRelatorio()" :disabled="!modalRelatorio.cliente_id || !modalRelatorio.competencia"
+              class="btn-primary flex-1">⬇ Baixar PDF</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL UPLOAD XML ── -->
+<div x-show="modalUploadXML.show" x-cloak
+     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-lg font-bold text-primary">📎 Upload de XML</h3>
+      <button @click="modalUploadXML.show = false" class="text-gray-400 hover:text-gray-600 text-xl font-bold">✕</button>
+    </div>
+    <form @submit.prevent="enviarUploadXML()">
+      <div class="space-y-4">
+        <div>
+          <label class="label">Cliente destinatário</label>
+          <select x-model="uploadXMLForm.cliente_id" class="input" required>
+            <option value="">Selecione...</option>
+            <template x-for="c in clientes" :key="c.id">
+              <option :value="c.id" x-text="c.razao_social"></option>
+            </template>
+          </select>
+        </div>
+        <div>
+          <label class="label">Arquivo XML (NF-e, NFC-e ou NFS-e)</label>
+          <input type="file" accept=".xml" @change="uploadXMLForm.arquivo = $event.target.files[0]"
+                 class="input cursor-pointer" required />
+          <p class="text-xs text-gray-400 mt-1">Formatos: NF-e modelo 55, NFC-e modelo 65, NFS-e ABRASF</p>
+        </div>
+        <div>
+          <label class="label">Observações (opcional)</label>
+          <textarea x-model="uploadXMLForm.observacoes" class="input h-20 resize-none"
+                    placeholder="Ex: NF de compra de material de escritório"></textarea>
+        </div>
+      </div>
+      <div class="flex gap-3 mt-5">
+        <button type="button" @click="modalUploadXML.show = false" class="btn-secondary flex-1">Cancelar</button>
+        <button type="submit" class="btn-primary flex-1">Importar XML</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL MANIFESTAÇÃO ── -->
+<div x-show="modalManifestar.show" x-cloak
+     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-lg font-bold text-primary">📋 Manifestação do Destinatário</h3>
+      <button @click="modalManifestar.show = false" class="text-gray-400 hover:text-gray-600 text-xl font-bold">✕</button>
+    </div>
+    <div class="mb-4 p-3 bg-gray-50 rounded-lg text-xs">
+      <div class="font-semibold text-gray-700" x-text="modalManifestar.doc?.emitente_razao_social"></div>
+      <div class="text-gray-500" x-text="'NF-e nº ' + (modalManifestar.doc?.numero || '—')"></div>
+      <div class="text-gray-500" x-text="'Valor: R$ ' + (modalManifestar.doc?.valor_total ?? 0).toLocaleString('pt-BR', {minimumFractionDigits:2})"></div>
+    </div>
+    <div class="space-y-2 mb-4">
+      <p class="text-xs font-semibold text-gray-600 uppercase tracking-wide">Tipo de manifestação</p>
+      <label class="flex items-center gap-2 p-3 border rounded-lg cursor-pointer hover:bg-green-50">
+        <input type="radio" name="manifestacao" value="confirmacao_operacao" x-model="modalManifestar.tipo" />
+        <div>
+          <div class="text-sm font-semibold text-green-700">Confirmação da Operação</div>
+          <div class="text-xs text-gray-500">A operação ocorreu exatamente como informado na NF-e</div>
+        </div>
+      </label>
+      <label class="flex items-center gap-2 p-3 border rounded-lg cursor-pointer hover:bg-blue-50">
+        <input type="radio" name="manifestacao" value="ciencia_operacao" x-model="modalManifestar.tipo" />
+        <div>
+          <div class="text-sm font-semibold text-blue-700">Ciência da Operação</div>
+          <div class="text-xs text-gray-500">Tomei ciência mas ainda não tenho condições de confirmar</div>
+        </div>
+      </label>
+      <label class="flex items-center gap-2 p-3 border rounded-lg cursor-pointer hover:bg-red-50">
+        <input type="radio" name="manifestacao" value="desconhecimento" x-model="modalManifestar.tipo" />
+        <div>
+          <div class="text-sm font-semibold text-red-700">Desconhecimento da Operação</div>
+          <div class="text-xs text-gray-500">Minha empresa não participou desta operação</div>
+        </div>
+      </label>
+      <label class="flex items-center gap-2 p-3 border rounded-lg cursor-pointer hover:bg-orange-50">
+        <input type="radio" name="manifestacao" value="operacao_nao_realizada" x-model="modalManifestar.tipo" />
+        <div>
+          <div class="text-sm font-semibold text-orange-700">Operação não Realizada</div>
+          <div class="text-xs text-gray-500">A operação foi acordada mas não se efetivou</div>
+        </div>
+      </label>
+    </div>
+    <div>
+      <label class="label">Justificativa (obrigatória para desconhecimento / op. não realizada)</label>
+      <textarea x-model="modalManifestar.justificativa" class="input h-16 resize-none"
+                placeholder="Descreva o motivo..."></textarea>
+    </div>
+    <div class="flex gap-3 mt-4">
+      <button @click="modalManifestar.show = false" class="btn-secondary flex-1">Cancelar</button>
+      <button @click="enviarManifestacao()" :disabled="!modalManifestar.tipo" class="btn-primary flex-1">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL CONTRATO ── -->
+<div x-show="modalContrato.show" x-cloak
+     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+     @click.self="modalContrato.show=false">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto">
+    <div class="sticky top-0 bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between">
+      <h3 class="text-lg font-bold text-primary" x-text="modalContrato.editando ? 'Editar Contrato' : 'Novo Contrato Recorrente'"></h3>
+      <button @click="modalContrato.show=false" class="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+    </div>
+    <form @submit.prevent="salvarContrato()" class="p-6 space-y-5">
+
+      <!-- Identificação -->
+      <div class="grid grid-cols-2 gap-3">
+        <div class="col-span-2">
+          <label class="label">Descrição do Contrato *</label>
+          <input type="text" x-model="contratoForm.descricao" class="input" required placeholder="Ex: Honorários contábeis mensais" />
+        </div>
+        <div>
+          <label class="label">Cliente *</label>
+          <select x-model="contratoForm.cliente_id" class="input" required @change="onClienteContratoChange()">
+            <option value="">Selecione...</option>
+            <template x-for="c in clientes" :key="c.id">
+              <option :value="c.id" x-text="c.razao_social"></option>
+            </template>
+          </select>
+        </div>
+        <div>
+          <label class="label">Tipo de Nota</label>
+          <select x-model="contratoForm.tipo_nota" class="input">
+            <option value="nfse">NFS-e (Serviço)</option>
+            <option value="nfe">NF-e (Produto)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Valor e agendamento -->
+      <div class="p-4 bg-slate-50 rounded-xl">
+        <p class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Valor e Agendamento</p>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="label">Valor (R$) *</label>
+            <input type="number" step="0.01" min="0.01" x-model.number="contratoForm.valor" class="input" required />
+          </div>
+          <div>
+            <label class="label">Dia de emissão *</label>
+            <input type="number" min="1" max="28" x-model.number="contratoForm.dia_emissao" class="input" required />
+            <p class="text-xs text-gray-400 mt-0.5">Use 1–28 (evita problemas em fevereiro)</p>
+          </div>
+          <div>
+            <label class="label">Modo de emissão</label>
+            <select x-model="contratoForm.modo_emissao" class="input">
+              <option value="fila">Fila (aprovação manual)</option>
+              <option value="automatico">Automático (sem intervenção)</option>
+            </select>
+          </div>
+        </div>
+        <div class="mt-3 flex items-center gap-2">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" x-model="contratoForm.gerar_boleto" class="w-4 h-4 accent-accent" />
+            <span class="text-sm">Gerar boleto junto com a nota</span>
+          </label>
+          <span class="text-xs text-gray-400">(requer boleto configurado no cliente)</span>
+        </div>
+      </div>
+
+      <!-- Tributação NFS-e -->
+      <div x-show="contratoForm.tipo_nota==='nfse'" class="p-4 bg-blue-50 border border-blue-100 rounded-xl">
+        <p class="text-xs font-bold text-blue-800 uppercase tracking-wider mb-3">Tributação NFS-e</p>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="label">Alíquota ISS (%)</label>
+            <input type="number" step="0.01" min="0" max="5" x-model.number="contratoForm.aliquota_iss" class="input" />
+          </div>
+          <div>
+            <label class="label">Deduções (R$)</label>
+            <input type="number" step="0.01" min="0" x-model.number="contratoForm.valor_deducoes" class="input" />
+          </div>
+          <div class="flex items-end pb-1">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" x-model="contratoForm.iss_retido" class="w-4 h-4 accent-accent" />
+              <span class="text-sm font-medium">ISS Retido</span>
+            </label>
+          </div>
+          <div>
+            <label class="label">PIS (R$)</label>
+            <input type="number" step="0.01" min="0" x-model.number="contratoForm.valor_pis" class="input" />
+          </div>
+          <div>
+            <label class="label">COFINS (R$)</label>
+            <input type="number" step="0.01" min="0" x-model.number="contratoForm.valor_cofins" class="input" />
+          </div>
+          <div>
+            <label class="label">INSS (R$)</label>
+            <input type="number" step="0.01" min="0" x-model.number="contratoForm.valor_inss" class="input" />
+          </div>
+          <div>
+            <label class="label">IR (R$)</label>
+            <input type="number" step="0.01" min="0" x-model.number="contratoForm.valor_ir" class="input" />
+          </div>
+          <div>
+            <label class="label">CSLL (R$)</label>
+            <input type="number" step="0.01" min="0" x-model.number="contratoForm.valor_csll" class="input" />
+          </div>
+          <div>
+            <label class="label">Cód. Serviço LC 116</label>
+            <input type="text" x-model="contratoForm.codigo_servico_lc116" class="input" placeholder="01.07" />
+          </div>
+        </div>
+        <div class="mt-3">
+          <label class="label">Discriminação dos Serviços</label>
+          <textarea x-model="contratoForm.discriminacao" class="input h-20 resize-none" placeholder="Descrição dos serviços prestados..."></textarea>
+        </div>
+      </div>
+
+      <!-- Tomador -->
+      <div class="p-4 bg-gray-50 rounded-xl">
+        <div class="flex items-center justify-between mb-3">
+          <p class="text-xs font-bold text-gray-500 uppercase tracking-wider">Tomador / Comprador</p>
+          <div class="flex items-center gap-2">
+            <input type="text" x-model="contratoForm.tomador_cnpj_busca" class="input text-xs w-44" placeholder="CNPJ para buscar" />
+            <button type="button" @click="buscarCNPJ(contratoForm.tomador_cnpj_busca, 'tomador_contrato')"
+                    class="btn-secondary text-xs px-3 py-1.5">🔍 RFB</button>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="label">CNPJ/CPF</label>
+            <input type="text" x-model="contratoForm.tomador_cpf_cnpj" class="input" />
+          </div>
+          <div>
+            <label class="label">Razão Social / Nome *</label>
+            <input type="text" x-model="contratoForm.tomador_razao_social" class="input" required />
+          </div>
+          <div>
+            <label class="label">E-mail</label>
+            <input type="email" x-model="contratoForm.tomador_email" class="input" />
+          </div>
+          <div>
+            <label class="label">Município</label>
+            <input type="text" x-model="contratoForm.tomador_municipio" class="input" />
+          </div>
+          <div>
+            <label class="label">UF</label>
+            <input type="text" x-model="contratoForm.tomador_uf" class="input" maxlength="2" />
+          </div>
+          <div>
+            <label class="label">CEP</label>
+            <input type="text" x-model="contratoForm.tomador_cep" class="input" />
+          </div>
+        </div>
+      </div>
+
+      <div x-show="modalContrato.erro" class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3" x-text="modalContrato.erro"></div>
+
+      <div class="flex gap-3 justify-end pt-2">
+        <button type="button" @click="modalContrato.show=false" class="btn-secondary">Cancelar</button>
+        <button type="submit" class="btn-primary" :disabled="loading">
+          <span x-show="!loading" x-text="modalContrato.editando ? 'Salvar Alterações' : 'Criar Contrato'"></span>
+          <span x-show="loading">Salvando...</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL BOLETO ── -->
+<div x-show="modalBoleto.show" x-cloak
+     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+     @click.self="modalBoleto.show=false">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6">
+    <h3 class="text-lg font-bold text-primary mb-4">💳 Boleto — Nota #<span x-text="modalBoleto.nota?.numero || modalBoleto.nota?.id"></span></h3>
+    <div x-show="!modalBoleto.gerado">
+      <p class="text-sm text-gray-600 mb-4">
+        Confirma a emissão do boleto para <strong x-text="modalBoleto.nota?.tomador_razao_social"></strong>
+        no valor de <strong class="text-green-700" x-text="fmtBRL(modalBoleto.nota?.valor_servico)"></strong>?
+      </p>
+      <p class="text-xs text-gray-400 mb-4">Vencimento conforme configurado no cadastro do cliente (padrão: 3 dias úteis).</p>
+      <div class="flex gap-3 justify-end">
+        <button @click="modalBoleto.show=false" class="btn-secondary">Cancelar</button>
+        <button @click="confirmarBoleto()" class="btn-primary" :disabled="loading">
+          <span x-show="!loading">Emitir Boleto</span>
+          <span x-show="loading">Gerando...</span>
+        </button>
+      </div>
+    </div>
+    <div x-show="modalBoleto.gerado" class="space-y-4">
+      <div x-show="modalBoleto.aviso" class="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg p-3" x-text="modalBoleto.aviso"></div>
+      <div class="bg-gray-50 rounded-xl p-4">
+        <p class="text-xs text-gray-500 mb-1">Linha Digitável</p>
+        <p class="font-mono text-sm font-bold tracking-wide break-all" x-text="modalBoleto.resultado?.linha_digitavel"></p>
+      </div>
+      <div class="grid grid-cols-2 gap-3 text-sm">
+        <div>
+          <p class="text-xs text-gray-500">Vencimento</p>
+          <p class="font-semibold" x-text="modalBoleto.resultado?.vencimento"></p>
+        </div>
+        <div>
+          <p class="text-xs text-gray-500">Status</p>
+          <p class="font-semibold text-yellow-700" x-text="modalBoleto.resultado?.status"></p>
+        </div>
+      </div>
+      <div x-show="modalBoleto.resultado?.url">
+        <a :href="modalBoleto.resultado?.url" target="_blank" class="btn-primary w-full text-center block">
+          Abrir Boleto PDF
+        </a>
+      </div>
+      <button @click="modalBoleto.show=false" class="btn-secondary w-full">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL SUBSTITUIÇÃO ── -->
+<div x-show="modalSubstituir.show" x-cloak
+     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+     @click.self="modalSubstituir.show=false">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+    <h3 class="text-lg font-bold text-primary mb-4">↺ Substituir Nota #<span x-text="modalSubstituir.nota?.numero || modalSubstituir.nota?.id"></span></h3>
+    <div class="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg p-3 mb-4">
+      <strong>Atenção:</strong> A nota original será <strong>cancelada</strong> e o formulário será pré-preenchido com seus dados para você emitir a nota substituta com as correções.
+    </div>
+    <p class="text-sm text-gray-600 mb-3">Informe o motivo do cancelamento:</p>
+    <textarea x-model="modalSubstituir.motivo" class="input h-20 resize-none mb-4" placeholder="Ex: Erro no valor, dados do tomador incorretos..." required></textarea>
+    <div class="flex gap-3 justify-end">
+      <button @click="modalSubstituir.show=false" class="btn-secondary">Cancelar</button>
+      <button @click="confirmarSubstituicao()" class="btn-primary" :disabled="loading">
+        <span x-show="!loading">Cancelar original e abrir formulário</span>
+        <span x-show="loading">Processando...</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL CANCELAMENTO ── -->
+<div x-show="modalCancelamento.show" x-cloak
+     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+     @click.self="modalCancelamento.show=false">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+    <h3 class="text-lg font-bold text-primary mb-4">Cancelar Nota #<span x-text="modalCancelamento.nota?.numero || modalCancelamento.nota?.id"></span></h3>
+    <p class="text-sm text-gray-600 mb-4">Esta ação é irreversível. Informe o motivo do cancelamento:</p>
+    <textarea x-model="modalCancelamento.motivo" class="input h-24 resize-none mb-4" placeholder="Motivo do cancelamento..." required></textarea>
+    <div x-show="modalCancelamento.erro" class="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg p-2 mb-3" x-text="modalCancelamento.erro"></div>
+    <div class="flex gap-3 justify-end">
+      <button @click="modalCancelamento.show=false" class="btn-secondary">Voltar</button>
+      <button @click="confirmarCancelamento()" class="btn-danger" :disabled="loading">
+        <span x-show="!loading">Confirmar Cancelamento</span>
+        <span x-show="loading">Cancelando...</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL CLIENTE ── -->
+<div x-show="modalCliente.show" x-cloak
+     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto"
+     @click.self="modalCliente.show=false">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6 my-4">
+    <h3 class="text-lg font-bold text-primary mb-5" x-text="modalCliente.editando ? 'Editar Cliente' : 'Novo Cliente'"></h3>
+    <form @submit.prevent="salvarCliente()" class="space-y-4">
+      <div class="grid grid-cols-2 gap-3">
+        <div class="col-span-2">
+          <label class="label">CNPJ</label>
+          <div class="flex gap-2">
+            <input type="text" x-model="clienteForm.cnpj" class="input" required :disabled="modalCliente.editando" placeholder="00.000.000/0001-00" />
+            <button type="button" @click="buscarCNPJ(clienteForm.cnpj, 'cliente')" x-show="!modalCliente.editando"
+              class="flex-shrink-0 bg-primary hover:bg-primary-dark text-white text-xs font-semibold px-3 py-2 rounded-lg transition-colors whitespace-nowrap">
+              🔍 Buscar RFB
+            </button>
+          </div>
+        </div>
+        <div class="col-span-2">
+          <label class="label">Razão Social</label>
+          <input type="text" x-model="clienteForm.razao_social" class="input" required />
+        </div>
+        <div>
+          <label class="label">Nome Fantasia</label>
+          <input type="text" x-model="clienteForm.nome_fantasia" class="input" />
+        </div>
+        <div>
+          <label class="label">Inscrição Estadual (IE)</label>
+          <input type="text" x-model="clienteForm.ie" class="input" />
+        </div>
+        <div>
+          <label class="label">Inscrição Municipal (IM)</label>
+          <input type="text" x-model="clienteForm.im" class="input" />
+        </div>
+        <div>
+          <label class="label">Regime Tributário</label>
+          <select x-model="clienteForm.regime_tributario" class="input">
+            <option>Simples Nacional</option>
+            <option>Lucro Presumido</option>
+            <option>Lucro Real</option>
+            <option>MEI</option>
+          </select>
+        </div>
+        <div>
+          <label class="label">Optante Simples?</label>
+          <select x-model="clienteForm.optante_simples" class="input">
+            <option :value="true">Sim</option>
+            <option :value="false">Não</option>
+          </select>
+        </div>
+        <div>
+          <label class="label">Município</label>
+          <input type="text" x-model="clienteForm.municipio" class="input" />
+        </div>
+        <div>
+          <label class="label">UF</label>
+          <select x-model="clienteForm.uf" class="input">
+            <option value="">—</option>
+            <template x-for="uf in ufs" :key="uf"><option :value="uf" x-text="uf"></option></template>
+          </select>
+        </div>
+        <div>
+          <label class="label">Código IBGE</label>
+          <input type="text" x-model="clienteForm.codigo_ibge" class="input" placeholder="ex: 1302603" />
+        </div>
+        <div>
+          <label class="label">CEP</label>
+          <input type="text" x-model="clienteForm.cep" class="input" />
+        </div>
+        <div>
+          <label class="label">E-mail</label>
+          <input type="email" x-model="clienteForm.email" class="input" />
+        </div>
+        <div>
+          <label class="label">Telefone</label>
+          <input type="text" x-model="clienteForm.telefone" class="input" />
+        </div>
+
+        <!-- Tipos de nota -->
+        <div class="col-span-2 border-t pt-3 mt-1">
+          <p class="text-xs font-bold text-primary uppercase tracking-wider mb-3">Tipos de Nota Emitidos</p>
+          <div class="flex gap-4">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" x-model="clienteForm.emite_nfse" class="w-4 h-4 accent-accent" />
+              <span class="text-sm font-semibold text-blue-700">NFS-e — Serviço</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" x-model="clienteForm.emite_nfe" class="w-4 h-4 accent-accent" />
+              <span class="text-sm font-semibold text-purple-700">NF-e — Produto (mod. 55)</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Config NFS-e -->
+        <div x-show="clienteForm.emite_nfse" class="col-span-2">
+          <div class="p-4 bg-blue-50 border border-blue-100 rounded-xl space-y-3">
+            <p class="text-xs font-bold text-blue-800 uppercase tracking-wider">Configurações NFS-e</p>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="label">Provedor NFS-e</label>
+                <select x-model="clienteForm.nfse_provider" class="input">
+                  <option value="mock">Mock (demo)</option>
+                  <option value="nfeio">NFe.io (agregadora)</option>
+                  <option value="nacional">NFS-e Nacional (SEFAZ)</option>
+                </select>
+              </div>
+              <div>
+                <label class="label">
+                  Alíquota ISS (%)
+                  <span class="text-gray-400 font-normal normal-case ml-1">— sugerido pelo município ao buscar CNPJ</span>
+                </label>
+                <input type="number" step="0.01" min="2" max="5" x-model.number="clienteForm.nfse_aliquota_iss" class="input" />
+              </div>
+              <div x-show="clienteForm.nfse_provider !== 'mock'">
+                <label class="label">API Key / Token Gov.br</label>
+                <input type="password" x-model="clienteForm.nfse_api_key" class="input" placeholder="Chave do provedor" />
+              </div>
+              <div x-show="clienteForm.nfse_provider === 'nfeio'">
+                <label class="label">Company ID (NFe.io)</label>
+                <input type="text" x-model="clienteForm.nfse_company_id" class="input" />
+              </div>
+              <div x-show="clienteForm.nfse_provider !== 'mock'">
+                <label class="label">Cód. IBGE do Município</label>
+                <input type="text" x-model="clienteForm.nfse_municipio_codigo" class="input" placeholder="ex: 1302603" />
+              </div>
+              <div>
+                <label class="label">Série RPS</label>
+                <input type="text" x-model="clienteForm.nfse_serie_rps" class="input" placeholder="RPS" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Config NF-e -->
+        <div x-show="clienteForm.emite_nfe" class="col-span-2">
+          <div class="p-4 bg-purple-50 border border-purple-100 rounded-xl space-y-3">
+            <p class="text-xs font-bold text-purple-800 uppercase tracking-wider">Configurações NF-e (Produto — mod. 55)</p>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="label">Provedor NF-e</label>
+                <select x-model="clienteForm.nfe_provider" class="input">
+                  <option value="mock">Mock (demo)</option>
+                  <option value="nfeio">NFe.io (agregadora)</option>
+                  <option value="sefaz">SEFAZ direto (certificado A1)</option>
+                </select>
+              </div>
+              <div>
+                <label class="label">Série NF-e</label>
+                <input type="text" x-model="clienteForm.nfe_serie" class="input" placeholder="1" />
+              </div>
+              <div x-show="clienteForm.nfe_provider === 'nfeio'">
+                <label class="label">API Key NFe.io (NF-e)</label>
+                <input type="password" x-model="clienteForm.nfe_api_key" class="input" />
+              </div>
+              <div x-show="clienteForm.nfe_provider === 'nfeio'">
+                <label class="label">Company ID NFe.io (NF-e)</label>
+                <input type="text" x-model="clienteForm.nfe_company_id" class="input" />
+              </div>
+              <div x-show="clienteForm.nfe_provider === 'sefaz'" class="col-span-2">
+                <label class="label">Caminho Certificado A1 (.pfx)</label>
+                <input type="text" x-model="clienteForm.nfe_certificado_path" class="input" placeholder="/certs/empresa.pfx" />
+              </div>
+              <div x-show="clienteForm.nfe_provider === 'sefaz'">
+                <label class="label">Senha do Certificado</label>
+                <input type="password" x-model="clienteForm.nfe_certificado_senha" class="input" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Config Boleto -->
+        <div class="col-span-2">
+          <div class="p-4 border border-gray-200 rounded-xl">
+            <label class="flex items-center gap-2 cursor-pointer mb-3">
+              <input type="checkbox" x-model="clienteForm.boleto_ativo" class="w-4 h-4 accent-accent" />
+              <span class="text-xs font-bold text-gray-700 uppercase tracking-wider">💳 Emissão de Boleto vinculado à nota (opcional)</span>
+            </label>
+            <div x-show="clienteForm.boleto_ativo" class="grid grid-cols-2 gap-3 mt-2">
+              <div>
+                <label class="label">Provedor de Boleto</label>
+                <select x-model="clienteForm.boleto_provider" class="input">
+                  <option value="mock">Mock (demo)</option>
+                  <option value="asaas">Asaas (recomendado)</option>
+                  <option value="gerencianet">Efí Bank / Gerencianet</option>
+                </select>
+              </div>
+              <div>
+                <label class="label">Vencimento (dias após emissão)</label>
+                <input type="number" min="1" max="90" x-model.number="clienteForm.boleto_dias_vencimento" class="input" />
+              </div>
+              <div x-show="clienteForm.boleto_provider !== 'mock'" class="col-span-2">
+                <label class="label">API Key do provedor de boleto</label>
+                <input type="password" x-model="clienteForm.boleto_api_key" class="input"
+                       placeholder="Asaas: access_token da conta" />
+                <p class="text-xs text-gray-400 mt-1">Asaas: obtenha em app.asaas.com → Configurações → Integrações</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div x-show="modalCliente.erro" class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3" x-text="modalCliente.erro"></div>
+
+      <div class="flex gap-3 justify-end pt-2">
+        <button type="button" @click="modalCliente.show=false" class="btn-secondary">Cancelar</button>
+        <button type="submit" class="btn-primary" :disabled="loading">
+          <span x-show="!loading" x-text="modalCliente.editando ? 'Salvar' : 'Cadastrar'"></span>
+          <span x-show="loading">Salvando...</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+const API = '/api'
+
+function app() {
+  return {
+    // Auth
+    token: localStorage.getItem('token') || '',
+    session: JSON.parse(localStorage.getItem('session') || '{}'),
+    authTab: 'login',
+    loginForm: { email: '', senha: '' },
+    regForm: { nome:'', cnpj:'', email:'', crc:'', usuario_nome:'', usuario_email:'', senha:'' },
+    authError: '',
+
+    // Nav
+    page: 'dashboard',
+    loading: false,
+    loadingPage: false,
+
+    // Toast
+    toast: { show: false, msg: '', type: 'success' },
+
+    // Dados
+    dash: null,
+    notas: [],
+    clientes: [],
+    filtros: { tipo:'', status:'', competencia:'', cliente_id:'' },
+
+    // Calendário Fiscal
+    calAno: new Date().getFullYear(),
+    calMes: new Date().getMonth() + 1,
+    calEventos: [],
+    calProximos: [],
+    calFiltroCliente: '',
+    calDiaSelecionado: null,
+
+    // Relatório mensal
+    modalRelatorio: { show: false, cliente_id: '', competencia: '' },
+
+    // Documentos Recebidos
+    docsRecebidos: [],
+    dashRecebidos: null,
+    sincronizando: false,
+    filtroRecebidos: { cliente_id: '', tipo: '', origem: '', mes: '' },
+    modalUploadXML: { show: false },
+    uploadXMLForm: { cliente_id: '', arquivo: null, observacoes: '' },
+    modalManifestar: { show: false, doc: null, tipo: '', justificativa: '' },
+
+    // Forms
+    nfseForm: {
+      cliente_id: '', data_competencia: '', codigo_servico_lc116: '',
+      codigo_servico_lc116_manual: '', codigo_servico_municipal: '',
+      discriminacao: '', valor_servico: 0,
+      valor_deducoes: 0, aliquota_iss: null, iss_retido: false,
+      valor_pis: 0, valor_cofins: 0, valor_inss: 0, valor_ir: 0, valor_csll: 0,
+      is_construtora: false,
+      obra_cei: '', obra_art: '', obra_alvara: '', obra_matricula: '',
+      obra_endereco: '', obra_inss_aliquota: 0,
+      tomador: { cpf_cnpj:'', razao_social:'', email:'', logradouro:'', numero:'',
+                 complemento:'', bairro:'', municipio:'', codigo_ibge:'', uf:'', cep:'' }
+    },
+    nfeForm: {
+      cliente_id: '', natureza_operacao: 'Venda de mercadorias', data_competencia: '',
+      itens: [{ descricao:'', codigo_produto:'', ncm:'', cfop:'5102', unidade:'UN',
+                quantidade:1, valor_unitario:0, aliquota_icms:0, aliquota_pis:0.65, aliquota_cofins:3 }],
+      tomador: { cpf_cnpj:'', razao_social:'', email:'', logradouro:'', numero:'',
+                 complemento:'', bairro:'', municipio:'', codigo_ibge:'', uf:'', cep:'' }
+    },
+    clienteForm: {
+      razao_social:'', nome_fantasia:'', cnpj:'', ie:'', im:'',
+      regime_tributario:'Simples Nacional', optante_simples: false,
+      municipio:'', uf:'', codigo_ibge:'', cep:'', logradouro:'', numero:'', bairro:'', email:'', telefone:'',
+      emite_nfse: true, emite_nfe: false,
+      nfse_provider:'mock', nfse_api_key:'', nfse_company_id:'',
+      nfse_municipio_codigo:'', nfse_aliquota_iss: 5.0, nfse_serie_rps: 'RPS',
+      nfe_provider:'mock', nfe_api_key:'', nfe_company_id:'',
+      nfe_serie:'1', nfe_certificado_path:'', nfe_certificado_senha:'',
+      boleto_ativo: false, boleto_provider:'mock', boleto_api_key:'', boleto_dias_vencimento: 3,
+    },
+
+    // Contratos
+    contratos: [],
+    contratosNaFila: [],
+    filtroContratos: { ativo: 'true', cliente_id: '' },
+    contratoForm: {
+      descricao: '', cliente_id: '', tipo_nota: 'nfse', valor: 0,
+      dia_emissao: 1, modo_emissao: 'fila', gerar_boleto: false,
+      aliquota_iss: 5.0, iss_retido: false, valor_deducoes: 0,
+      valor_pis: 0, valor_cofins: 0, valor_inss: 0, valor_ir: 0, valor_csll: 0,
+      codigo_servico_lc116: '', discriminacao: '',
+      tomador_cnpj_busca: '', tomador_cpf_cnpj: '', tomador_razao_social: '',
+      tomador_email: '', tomador_municipio: '', tomador_uf: '', tomador_cep: '',
+      tomador_logradouro: '', tomador_numero: '', tomador_bairro: '', tomador_codigo_ibge: '',
+    },
+    modalContrato: { show: false, editando: false, id: null, erro: '' },
+
+    // Modais
+    modalCancelamento: { show: false, nota: null, motivo: '', erro: '' },
+    modalBoleto: { show: false, nota: null, gerado: false, resultado: null, aviso: null },
+    modalSubstituir: { show: false, nota: null, motivo: '' },
+    modalCliente: { show: false, editando: false, id: null, erro: '' },
+
+    // Computed
+    clienteSelecionado: null,
+    erroEmissao: '',
+    preview: { iss: 0, outras: 0, liquido: 0 },
+
+    ufs: ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG',
+          'PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'],
+
+    async init() {
+      if (this.token) {
+        await this.carregarClientes()
+        await this.carregarDashboard()
+        this.carregarDashRecebidos()
+        this.carregarFilaContratos()
+        const m = new Date()
+        this.nfseForm.data_competencia = `${m.getFullYear()}-${String(m.getMonth()+1).padStart(2,'0')}`
+        this.nfeForm.data_competencia = this.nfseForm.data_competencia
+      }
+    },
+
+    goto(p) {
+      this.page = p
+      this.erroEmissao = ''
+      if (p === 'dashboard') this.carregarDashboard()
+      if (p === 'notas') this.carregarNotas()
+      if (p === 'clientes') this.carregarClientes()
+      if (p === 'recebidas') { this.carregarRecebidos(); this.carregarDashRecebidos() }
+      if (p === 'calendario') { this.carregarCalendario(); this.carregarProximos() }
+      if (p === 'contratos') this.carregarContratos()
+    },
+
+    // ─── AUTH ──────────────────────────────────────────
+
+    async login() {
+      this.loading = true; this.authError = ''
+      try {
+        const r = await fetch(`${API}/auth/login`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ email: this.loginForm.email, senha: this.loginForm.senha })
+        })
+        const d = await r.json()
+        if (!r.ok) throw new Error(d.detail || 'Erro ao entrar.')
+        this._setSession(d)
+        await this.init()
+      } catch(e) { this.authError = e.message }
+      finally { this.loading = false }
+    },
+
+    async registrar() {
+      this.loading = true; this.authError = ''
+      try {
+        const r = await fetch(`${API}/auth/registrar`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(this.regForm)
+        })
+        const d = await r.json()
+        if (!r.ok) throw new Error(d.detail || 'Erro ao registrar.')
+        this._setSession(d)
+        await this.init()
+      } catch(e) { this.authError = e.message }
+      finally { this.loading = false }
+    },
+
+    _setSession(d) {
+      this.token = d.access_token
+      this.session = { usuario_nome: d.usuario_nome, escritorio_nome: d.escritorio_nome,
+                       escritorio_id: d.escritorio_id, plano: d.plano, role: d.role }
+      localStorage.setItem('token', this.token)
+      localStorage.setItem('session', JSON.stringify(this.session))
+    },
+
+    logout() {
+      this.token = ''; this.session = {}
+      localStorage.removeItem('token'); localStorage.removeItem('session')
+    },
+
+    // ─── API HELPERS ───────────────────────────────────
+
+    async _fetch(url, opts={}) {
+      const r = await fetch(url, {
+        ...opts,
+        headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${this.token}`, ...(opts.headers||{}) }
+      })
+      if (r.status === 401) { this.logout(); return null }
+      return r
+    },
+
+    // ─── DASHBOARD ─────────────────────────────────────
+
+    async carregarDashboard() {
+      this.loadingPage = true
+      try {
+        const r = await this._fetch(`${API}/notas/dashboard`)
+        if (r?.ok) this.dash = await r.json()
+      } finally { this.loadingPage = false }
+    },
+
+    // ─── NOTAS ─────────────────────────────────────────
+
+    async carregarNotas() {
+      this.loadingPage = true
+      try {
+        const p = new URLSearchParams()
+        if (this.filtros.tipo) p.append('tipo', this.filtros.tipo)
+        if (this.filtros.status) p.append('status', this.filtros.status)
+        if (this.filtros.competencia) p.append('competencia', this.filtros.competencia)
+        if (this.filtros.cliente_id) p.append('cliente_id', this.filtros.cliente_id)
+        const r = await this._fetch(`${API}/notas?${p}&limit=100`)
+        if (r?.ok) this.notas = await r.json()
+      } finally { this.loadingPage = false }
+    },
+
+    abrirNota(n) {
+      // Abre PDF em nova aba
+      window.open(`${API}/notas/${n.id}/pdf`, '_blank')
+    },
+
+    // ─── DUPLICAR NOTA ──────────────────────────────────
+    async duplicarNota(nota) {
+      try {
+        const r = await this._fetch(`${API}/notas/${nota.id}/duplicar`)
+        const d = await r.json()
+        if (nota.tipo === 'nfse') {
+          this.nfseForm = {
+            cliente_id: d.cliente_id || '',
+            data_competencia: d.data_competencia || '',
+            codigo_servico_lc116: d.codigo_servico_lc116 || '',
+            codigo_servico_municipal: d.codigo_servico_municipal || '',
+            discriminacao: d.discriminacao || '',
+            valor_servico: d.valor_servico || 0,
+            valor_deducoes: d.valor_deducoes || 0,
+            aliquota_iss: d.aliquota_iss || null,
+            iss_retido: d.iss_retido || false,
+            valor_pis: d.valor_pis || 0, valor_cofins: d.valor_cofins || 0,
+            valor_inss: d.valor_inss || 0, valor_ir: d.valor_ir || 0, valor_csll: d.valor_csll || 0,
+            natureza_operacao: d.natureza_operacao || '',
+            is_construtora: false, obra_cei:'', obra_art:'', obra_alvara:'', obra_matricula:'', obra_endereco:'', obra_inss_aliquota:0,
+            tomador: { ...d.tomador }
+          }
+          this.clienteSelecionado = this.clientes.find(c => c.id == d.cliente_id) || null
+          this.page = 'nfse'
+          this.showToast('Formulário NFS-e pré-preenchido com os dados da nota duplicada.')
+        } else {
+          this.nfeForm = {
+            cliente_id: d.cliente_id || '',
+            natureza_operacao: d.natureza_operacao || 'Venda de mercadorias',
+            data_competencia: d.data_competencia || '',
+            cfop: d.cfop || '',
+            itens: d.itens?.length ? d.itens : [{ descricao:'', codigo_produto:'', ncm:'', cfop:'5102', unidade:'UN', quantidade:1, valor_unitario:0, aliquota_icms:0, aliquota_pis:0.65, aliquota_cofins:3 }],
+            tomador: { ...d.tomador }
+          }
+          this.clienteSelecionado = this.clientes.find(c => c.id == d.cliente_id) || null
+          this.page = 'nfe'
+          this.showToast('Formulário NF-e pré-preenchido com os dados da nota duplicada.')
+        }
+      } catch(e) { this.showToast('Erro ao duplicar nota.', 'error') }
+    },
+
+    // ─── SUBSTITUIR NOTA ────────────────────────────────
+    substituirNota(nota) {
+      this.modalSubstituir = { show: true, nota, motivo: '' }
+    },
+
+    async confirmarSubstituicao() {
+      if (!this.modalSubstituir.motivo.trim()) {
+        this.showToast('Informe o motivo da substituição.', 'error'); return
+      }
+      this.loading = true
+      try {
+        const r = await this._fetch(`${API}/notas/${this.modalSubstituir.nota.id}/substituir`, {
+          method: 'POST',
+          body: JSON.stringify({ motivo: this.modalSubstituir.motivo })
+        })
+        const d = await r.json()
+        this.modalSubstituir.show = false
+        await this.carregarNotas()
+        // Pré-preenche o formulário com os dados retornados
+        await this.duplicarNota({ id: this.modalSubstituir.nota?.id, tipo: this.modalSubstituir.nota?.tipo })
+        this.showToast('Nota original cancelada. Emita a substituta agora.')
+      } catch(e) { this.showToast('Erro ao substituir nota.', 'error') }
+      finally { this.loading = false }
+    },
+
+    // ─── BOLETO ─────────────────────────────────────────
+    emitirBoleto(nota) {
+      this.modalBoleto = { show: true, nota, gerado: false, resultado: null, aviso: null }
+    },
+
+    mostrarBoleto(nota) {
+      this.modalBoleto = {
+        show: true, nota, gerado: true, aviso: null,
+        resultado: {
+          linha_digitavel: nota.boleto_linha_digitavel,
+          codigo_barras: nota.boleto_codigo_barras,
+          url: nota.boleto_url,
+          vencimento: nota.boleto_vencimento ? nota.boleto_vencimento.split('T')[0] : '',
+          status: nota.boleto_status,
+        }
+      }
+    },
+
+    async confirmarBoleto() {
+      this.loading = true
+      try {
+        const r = await this._fetch(`${API}/notas/${this.modalBoleto.nota.id}/boleto`, { method: 'POST' })
+        const d = await r.json()
+        this.modalBoleto.resultado = d
+        this.modalBoleto.aviso = d.aviso || null
+        this.modalBoleto.gerado = true
+        await this.carregarNotas()
+        this.showToast('Boleto gerado com sucesso!')
+      } catch(e) { this.showToast('Erro ao gerar boleto.', 'error') }
+      finally { this.loading = false }
+    },
+
+    iniciarCancelamento(nota) {
+      this.modalCancelamento = { show: true, nota, motivo: '', erro: '' }
+    },
+
+    async confirmarCancelamento() {
+      if (!this.modalCancelamento.motivo.trim()) {
+        this.modalCancelamento.erro = 'Informe o motivo do cancelamento.'
+        return
+      }
+      this.loading = true; this.modalCancelamento.erro = ''
+      try {
+        const r = await this._fetch(`${API}/notas/${this.modalCancelamento.nota.id}/cancelar`, {
+          method:'POST', body: JSON.stringify({ motivo: this.modalCancelamento.motivo })
+        })
+        const d = await r.json()
+        if (!r.ok) throw new Error(d.detail || 'Erro ao cancelar.')
+        this.modalCancelamento.show = false
+        this.showToast('Nota cancelada com sucesso.')
+        this.carregarNotas()
+        this.carregarDashboard()
+      } catch(e) { this.modalCancelamento.erro = e.message }
+      finally { this.loading = false }
+    },
+
+    // ─── EMISSÃO NFS-e ─────────────────────────────────
+
+    onClienteSelect() {
+      const c = this.clientes.find(x => x.id == this.nfseForm.cliente_id)
+      this.clienteSelecionado = c || null
+      if (c?.nfse_aliquota_iss) {
+        this.nfseForm.aliquota_iss = c.nfse_aliquota_iss
+        this.calcularNFSe()
+      }
+    },
+
+    calcularNFSe() {
+      const aliq = this.nfseForm.aliquota_iss || this.clienteSelecionado?.nfse_aliquota_iss || 5
+      const bc = Math.max(0, this.nfseForm.valor_servico - (this.nfseForm.valor_deducoes||0))
+      this.preview.iss = Math.round(bc * aliq / 100 * 100) / 100
+      this.preview.outras = (this.nfseForm.valor_pis||0) + (this.nfseForm.valor_cofins||0)
+        + (this.nfseForm.valor_inss||0) + (this.nfseForm.valor_ir||0) + (this.nfseForm.valor_csll||0)
+      this.preview.liquido = Math.round((this.nfseForm.valor_servico - this.preview.iss - this.preview.outras) * 100) / 100
+    },
+
+    async emitirNFSe() {
+      if (!this.nfseForm.cliente_id) { this.erroEmissao = 'Selecione o cliente.'; return }
+      this.loading = true; this.erroEmissao = ''
+      try {
+        const body = { ...this.nfseForm, cliente_id: parseInt(this.nfseForm.cliente_id) }
+        const r = await this._fetch(`${API}/notas/nfse`, { method:'POST', body: JSON.stringify(body) })
+        const d = await r.json()
+        if (!r.ok) throw new Error(d.detail || 'Erro ao emitir NFS-e.')
+        this.showToast(`NFS-e #${d.numero || d.id} emitida com sucesso!`)
+        this.goto('notas')
+        this.resetNFSeForm()
+      } catch(e) { this.erroEmissao = e.message }
+      finally { this.loading = false }
+    },
+
+    resetNFSeForm() {
+      const m = new Date()
+      const comp = `${m.getFullYear()}-${String(m.getMonth()+1).padStart(2,'0')}`
+      this.nfseForm = { cliente_id:'', data_competencia: comp, codigo_servico_lc116:'',
+        codigo_servico_lc116_manual:'', codigo_servico_municipal:'', discriminacao:'',
+        valor_servico:0, valor_deducoes:0, aliquota_iss: null, iss_retido: false,
+        valor_pis:0, valor_cofins:0, valor_inss:0, valor_ir:0, valor_csll:0,
+        is_construtora: false, obra_cei:'', obra_art:'', obra_alvara:'', obra_matricula:'',
+        obra_endereco:'', obra_inss_aliquota: 0,
+        tomador: { cpf_cnpj:'', razao_social:'', email:'', logradouro:'', numero:'',
+                   complemento:'', bairro:'', municipio:'', codigo_ibge:'', uf:'', cep:'' }
+      }
+      this.clienteSelecionado = null; this.preview = { iss:0, outras:0, liquido:0 }
+    },
+
+    emitirParaCliente(c) {
+      this.resetNFSeForm()
+      this.nfseForm.cliente_id = c.id
+      this.clienteSelecionado = c
+      this.nfseForm.aliquota_iss = c.nfse_aliquota_iss
+      this.goto('emitir-nfse')
+    },
+
+    // ─── EMISSÃO NF-e ──────────────────────────────────
+
+    addItemNFe() {
+      this.nfeForm.itens.push({ descricao:'', codigo_produto:'', ncm:'', cfop:'5102',
+        unidade:'UN', quantidade:1, valor_unitario:0, aliquota_icms:0,
+        aliquota_pis:0.65, aliquota_cofins:3 })
+    },
+
+    async emitirNFe() {
+      if (!this.nfeForm.cliente_id) { this.erroEmissao = 'Selecione o cliente.'; return }
+      this.loading = true; this.erroEmissao = ''
+      try {
+        const body = { ...this.nfeForm, cliente_id: parseInt(this.nfeForm.cliente_id) }
+        const r = await this._fetch(`${API}/notas/nfe`, { method:'POST', body: JSON.stringify(body) })
+        const d = await r.json()
+        if (!r.ok) throw new Error(d.detail || 'Erro ao emitir NF-e.')
+        this.showToast(`NF-e #${d.numero || d.id} emitida com sucesso!`)
+        this.goto('notas')
+      } catch(e) { this.erroEmissao = e.message }
+      finally { this.loading = false }
+    },
+
+    // ─── CLIENTES ──────────────────────────────────────
+
+    async carregarClientes() {
+      this.loadingPage = true
+      try {
+        const r = await this._fetch(`${API}/clientes`)
+        if (r?.ok) this.clientes = await r.json()
+      } finally { this.loadingPage = false }
+    },
+
+    abrirModalCliente(c) {
+      this.modalCliente.erro = ''
+      if (c) {
+        this.modalCliente.editando = true; this.modalCliente.id = c.id
+        this.clienteForm = {
+          razao_social: c.razao_social || '', nome_fantasia: c.nome_fantasia || '',
+          cnpj: c.cnpj || '', ie: c.ie || '', im: c.im || '',
+          regime_tributario: c.regime_tributario || 'Simples Nacional',
+          optante_simples: c.optante_simples ?? false,
+          municipio: c.municipio || '', uf: c.uf || '',
+          codigo_ibge: c.codigo_ibge || '', cep: c.cep || '',
+          logradouro: c.logradouro || '', numero: c.numero || '', bairro: c.bairro || '',
+          email: c.email || '', telefone: c.telefone || '',
+          emite_nfse: c.emite_nfse ?? true,
+          emite_nfe: c.emite_nfe ?? false,
+          nfse_provider: c.nfse_provider || 'mock',
+          nfse_api_key: c.nfse_api_key || '',
+          nfse_company_id: c.nfse_company_id || '',
+          nfse_municipio_codigo: c.nfse_municipio_codigo || c.codigo_ibge || '',
+          nfse_aliquota_iss: c.nfse_aliquota_iss ?? 5.0,
+          nfse_serie_rps: c.nfse_serie_rps || 'RPS',
+          nfe_provider: c.nfe_provider || 'mock',
+          nfe_api_key: c.nfe_api_key || '',
+          nfe_company_id: c.nfe_company_id || '',
+          nfe_serie: c.nfe_serie || '1',
+          nfe_certificado_path: c.nfe_certificado_path || '',
+          nfe_certificado_senha: '',
+          boleto_ativo: c.boleto_ativo ?? false,
+          boleto_provider: c.boleto_provider || 'mock',
+          boleto_api_key: c.boleto_api_key || '',
+          boleto_dias_vencimento: c.boleto_dias_vencimento ?? 3,
+        }
+      } else {
+        this.modalCliente.editando = false; this.modalCliente.id = null
+        this.clienteForm = {
+          razao_social:'', nome_fantasia:'', cnpj:'', ie:'', im:'',
+          regime_tributario:'Simples Nacional', optante_simples: false,
+          municipio:'', uf:'', codigo_ibge:'', cep:'', logradouro:'', numero:'', bairro:'',
+          email:'', telefone:'',
+          emite_nfse: true, emite_nfe: false,
+          nfse_provider:'mock', nfse_api_key:'', nfse_company_id:'',
+          nfse_municipio_codigo:'', nfse_aliquota_iss: 5.0, nfse_serie_rps: 'RPS',
+          nfe_provider:'mock', nfe_api_key:'', nfe_company_id:'',
+          nfe_serie:'1', nfe_certificado_path:'', nfe_certificado_senha:'',
+          boleto_ativo: false, boleto_provider:'mock', boleto_api_key:'', boleto_dias_vencimento: 3,
+        }
+      }
+      this.modalCliente.show = true
+    },
+
+    async salvarCliente() {
+      this.loading = true; this.modalCliente.erro = ''
+      try {
+        const url = this.modalCliente.editando
+          ? `${API}/clientes/${this.modalCliente.id}`
+          : `${API}/clientes`
+        const method = this.modalCliente.editando ? 'PUT' : 'POST'
+        const r = await this._fetch(url, { method, body: JSON.stringify(this.clienteForm) })
+        const d = await r.json()
+        if (!r.ok) throw new Error(d.detail || 'Erro ao salvar cliente.')
+        this.modalCliente.show = false
+        this.showToast(this.modalCliente.editando ? 'Cliente atualizado.' : 'Cliente cadastrado.')
+        await this.carregarClientes()
+      } catch(e) { this.modalCliente.erro = e.message }
+      finally { this.loading = false }
+    },
+
+    // ─── CALENDÁRIO FISCAL ─────────────────────────────
+
+    async carregarCalendario() {
+      const p = new URLSearchParams({ ano: this.calAno, mes: this.calMes })
+      if (this.calFiltroCliente) p.append('cliente_id', this.calFiltroCliente)
+      try { this.calEventos = await this.api(`/api/calendario/mes?${p}`) } catch(e) {}
+    },
+
+    async carregarProximos() {
+      const p = new URLSearchParams({ dias: 30 })
+      if (this.calFiltroCliente) p.append('cliente_id', this.calFiltroCliente)
+      try { this.calProximos = await this.api(`/api/calendario/proximos?${p}`) } catch(e) {}
+    },
+
+    calMesNome() {
+      const meses = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+                     'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
+      return `${meses[this.calMes]} ${this.calAno}`
+    },
+
+    calMesAnterior() {
+      if (this.calMes === 1) { this.calMes = 12; this.calAno-- }
+      else this.calMes--
+      this.calDiaSelecionado = null
+      this.carregarCalendario()
+    },
+
+    calMesSeguinte() {
+      if (this.calMes === 12) { this.calMes = 1; this.calAno++ }
+      else this.calMes++
+      this.calDiaSelecionado = null
+      this.carregarCalendario()
+    },
+
+    calHoje() {
+      const h = new Date()
+      this.calAno = h.getFullYear(); this.calMes = h.getMonth() + 1
+      this.calDiaSelecionado = null
+      this.carregarCalendario(); this.carregarProximos()
+    },
+
+    calPrimeiroDiaSemana() {
+      // Quantas células vazias antes do dia 1 (semana começa no domingo)
+      const d = new Date(this.calAno, this.calMes - 1, 1).getDay()
+      return Array.from({ length: d }, (_, i) => i)
+    },
+
+    calDiasDoMes() {
+      const n = new Date(this.calAno, this.calMes, 0).getDate()
+      return Array.from({ length: n }, (_, i) => i + 1)
+    },
+
+    calEHoje(dia) {
+      const h = new Date()
+      return dia === h.getDate() && this.calMes === h.getMonth() + 1 && this.calAno === h.getFullYear()
+    },
+
+    calEventosDia(dia) {
+      const key = `${this.calAno}-${String(this.calMes).padStart(2,'0')}-${String(dia).padStart(2,'0')}`
+      return this.calEventos.filter(e => e.data === key)
+    },
+
+    calSelecionarDia(dia) {
+      this.calDiaSelecionado = this.calDiaSelecionado === dia ? null : dia
+    },
+
+    calDiasRestantes(dataStr) {
+      const hoje = new Date(); hoje.setHours(0,0,0,0)
+      const alvo = new Date(dataStr + 'T12:00:00')
+      return Math.round((alvo - hoje) / 86400000)
+    },
+
+    // ─── RELATÓRIO MENSAL ──────────────────────────────
+
+    abrirModalRelatorio() {
+      const hoje = new Date()
+      const comp = `${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}`
+      this.modalRelatorio = { show: true, cliente_id: '', competencia: comp }
+    },
+
+    async baixarRelatorio() {
+      const { cliente_id, competencia } = this.modalRelatorio
+      if (!cliente_id || !competencia) return
+      try {
+        const r = await fetch(`/api/notas/relatorio/${cliente_id}/${competencia}`, {
+          headers: { Authorization: `Bearer ${this.token}` }
+        })
+        if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Erro') }
+        const blob = await r.blob()
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `relatorio_${competencia}.pdf`
+        a.click()
+        URL.revokeObjectURL(url)
+        this.modalRelatorio.show = false
+        this.showToast('Relatório gerado com sucesso!')
+      } catch(e) {
+        this.showToast(e.message || 'Erro ao gerar relatório', 'error')
+      }
+    },
+
+    // ─── DOCUMENTOS RECEBIDOS ──────────────────────────
+
+    async carregarDashRecebidos() {
+      try {
+        const r = await this.api('/api/recebidos/dashboard')
+        this.dashRecebidos = r
+      } catch(e) {}
+    },
+
+    async carregarRecebidos() {
+      this.loadingPage = true
+      try {
+        const p = new URLSearchParams()
+        if (this.filtroRecebidos.cliente_id) p.append('cliente_id', this.filtroRecebidos.cliente_id)
+        if (this.filtroRecebidos.tipo) p.append('tipo', this.filtroRecebidos.tipo)
+        if (this.filtroRecebidos.origem) p.append('origem', this.filtroRecebidos.origem)
+        if (this.filtroRecebidos.mes) p.append('mes', this.filtroRecebidos.mes)
+        this.docsRecebidos = await this.api(`/api/recebidos?${p}`)
+      } catch(e) { this.showToast('Erro ao carregar documentos', 'error') }
+      finally { this.loadingPage = false }
+    },
+
+    async sincronizarTodos() {
+      if (!this.clientes.length) { await this.carregarClientes() }
+      this.sincronizando = true
+      let total = 0
+      for (const c of this.clientes) {
+        try {
+          const r = await this.api(`/api/recebidos/sincronizar/${c.id}`, 'POST')
+          total += r.importados || 0
+        } catch(e) {}
+      }
+      this.sincronizando = false
+      this.showToast(`Sincronização concluída — ${total} novo(s) documento(s) importado(s)`)
+      await this.carregarRecebidos()
+      await this.carregarDashRecebidos()
+    },
+
+    abrirModalUploadXML() {
+      this.uploadXMLForm = { cliente_id: '', arquivo: null, observacoes: '' }
+      this.modalUploadXML.show = true
+    },
+
+    async enviarUploadXML() {
+      if (!this.uploadXMLForm.cliente_id || !this.uploadXMLForm.arquivo) {
+        this.showToast('Selecione o cliente e o arquivo XML', 'error')
+        return
+      }
+      const fd = new FormData()
+      fd.append('cliente_id', this.uploadXMLForm.cliente_id)
+      fd.append('xml_file', this.uploadXMLForm.arquivo)
+      if (this.uploadXMLForm.observacoes) fd.append('observacoes', this.uploadXMLForm.observacoes)
+      try {
+        const r = await fetch('/api/recebidos/upload', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${this.token}` },
+          body: fd,
+        })
+        const data = await r.json()
+        if (!r.ok) throw new Error(data.detail || 'Erro no upload')
+        this.modalUploadXML.show = false
+        this.showToast('XML importado com sucesso!')
+        await this.carregarRecebidos()
+        await this.carregarDashRecebidos()
+      } catch(e) {
+        this.showToast(e.message || 'Erro ao importar XML', 'error')
+      }
+    },
+
+    abrirManifestar(doc) {
+      this.modalManifestar = { show: true, doc, tipo: '', justificativa: '' }
+    },
+
+    async enviarManifestacao() {
+      const d = this.modalManifestar
+      if (!d.tipo) return
+      const fd = new FormData()
+      fd.append('tipo_evento', d.tipo)
+      if (d.justificativa) fd.append('justificativa', d.justificativa)
+      try {
+        const r = await fetch(`/api/recebidos/${d.doc.id}/manifestar`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${this.token}` },
+          body: fd,
+        })
+        const data = await r.json()
+        if (!r.ok) throw new Error(data.detail || 'Erro')
+        this.modalManifestar.show = false
+        this.showToast(data.mensagem)
+        await this.carregarRecebidos()
+        await this.carregarDashRecebidos()
+      } catch(e) {
+        this.showToast(e.message || 'Erro ao manifestar', 'error')
+      }
+    },
+
+    async baixarXMLRecebido(id) {
+      const r = await fetch(`/api/recebidos/${id}/xml`, {
+        headers: { Authorization: `Bearer ${this.token}` }
+      })
+      if (!r.ok) { this.showToast('XML não disponível', 'error'); return }
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a'); a.href = url; a.download = `doc_${id}.xml`; a.click()
+      URL.revokeObjectURL(url)
+    },
+
+    async excluirRecebido(id) {
+      if (!confirm('Excluir este documento recebido?')) return
+      try {
+        await this.api(`/api/recebidos/${id}`, 'DELETE')
+        this.showToast('Documento excluído')
+        await this.carregarRecebidos()
+        await this.carregarDashRecebidos()
+      } catch(e) { this.showToast('Erro ao excluir', 'error') }
+    },
+
+    // ─── CONTRATOS RECORRENTES ──────────────────────────
+
+    async carregarContratos() {
+      this.loadingPage = true
+      try {
+        const params = new URLSearchParams()
+        if (this.filtroContratos.ativo !== '') params.append('ativo', this.filtroContratos.ativo)
+        if (this.filtroContratos.cliente_id) params.append('cliente_id', this.filtroContratos.cliente_id)
+        const r = await this._fetch(`${API}/contratos?${params}`)
+        this.contratos = await r.json()
+      } catch(e) { this.showToast('Erro ao carregar contratos.', 'error') }
+      finally { this.loadingPage = false }
+    },
+
+    async carregarFilaContratos() {
+      try {
+        const r = await this._fetch(`${API}/contratos/fila`)
+        this.contratosNaFila = await r.json()
+      } catch(e) { this.contratosNaFila = [] }
+    },
+
+    abrirModalContrato(c) {
+      this.modalContrato.erro = ''
+      if (c) {
+        this.modalContrato.editando = true; this.modalContrato.id = c.id
+        this.contratoForm = {
+          descricao: c.descricao || '', cliente_id: c.cliente_id || '',
+          tipo_nota: c.tipo_nota || 'nfse', valor: c.valor || 0,
+          dia_emissao: c.dia_emissao || 1, modo_emissao: c.modo_emissao || 'fila',
+          gerar_boleto: c.gerar_boleto || false,
+          aliquota_iss: c.aliquota_iss ?? 5.0, iss_retido: c.iss_retido || false,
+          valor_deducoes: c.valor_deducoes || 0, valor_pis: c.valor_pis || 0,
+          valor_cofins: c.valor_cofins || 0, valor_inss: c.valor_inss || 0,
+          valor_ir: c.valor_ir || 0, valor_csll: c.valor_csll || 0,
+          codigo_servico_lc116: c.codigo_servico_lc116 || '', discriminacao: c.discriminacao || '',
+          tomador_cnpj_busca: c.tomador_cpf_cnpj || '',
+          tomador_cpf_cnpj: c.tomador_cpf_cnpj || '', tomador_razao_social: c.tomador_razao_social || '',
+          tomador_email: c.tomador_email || '', tomador_municipio: c.tomador_municipio || '',
+          tomador_uf: c.tomador_uf || '', tomador_cep: c.tomador_cep || '',
+          tomador_logradouro: c.tomador_logradouro || '', tomador_numero: c.tomador_numero || '',
+          tomador_bairro: c.tomador_bairro || '', tomador_codigo_ibge: c.tomador_codigo_ibge || '',
+        }
+      } else {
+        this.modalContrato.editando = false; this.modalContrato.id = null
+        this.contratoForm = {
+          descricao: '', cliente_id: '', tipo_nota: 'nfse', valor: 0,
+          dia_emissao: 1, modo_emissao: 'fila', gerar_boleto: false,
+          aliquota_iss: 5.0, iss_retido: false, valor_deducoes: 0,
+          valor_pis: 0, valor_cofins: 0, valor_inss: 0, valor_ir: 0, valor_csll: 0,
+          codigo_servico_lc116: '', discriminacao: '',
+          tomador_cnpj_busca: '', tomador_cpf_cnpj: '', tomador_razao_social: '',
+          tomador_email: '', tomador_municipio: '', tomador_uf: '', tomador_cep: '',
+          tomador_logradouro: '', tomador_numero: '', tomador_bairro: '', tomador_codigo_ibge: '',
+        }
+      }
+      this.modalContrato.show = true
+    },
+
+    onClienteContratoChange() {
+      const cli = this.clientes.find(x => x.id == this.contratoForm.cliente_id)
+      if (cli?.nfse_aliquota_iss) this.contratoForm.aliquota_iss = cli.nfse_aliquota_iss
+      if (cli?.codigo_ibge) this.contratoForm.tomador_codigo_ibge = cli.codigo_ibge
+    },
+
+    async salvarContrato() {
+      this.loading = true; this.modalContrato.erro = ''
+      try {
+        const url = this.modalContrato.editando
+          ? `${API}/contratos/${this.modalContrato.id}`
+          : `${API}/contratos`
+        const method = this.modalContrato.editando ? 'PUT' : 'POST'
+        const r = await this._fetch(url, { method, body: JSON.stringify(this.contratoForm) })
+        const d = await r.json()
+        if (!r.ok) throw new Error(d.detail || 'Erro ao salvar contrato.')
+        this.modalContrato.show = false
+        this.showToast(this.modalContrato.editando ? 'Contrato atualizado.' : 'Contrato criado.')
+        await this.carregarContratos()
+        await this.carregarFilaContratos()
+      } catch(e) { this.modalContrato.erro = e.message }
+      finally { this.loading = false }
+    },
+
+    async emitirContrato(contratoId) {
+      this.loading = true
+      try {
+        const r = await this._fetch(`${API}/contratos/${contratoId}/emitir`, { method: 'POST' })
+        const d = await r.json()
+        if (!r.ok) throw new Error(d.detail || 'Erro ao emitir.')
+        this.showToast(`Nota emitida com sucesso! RPS nº ${d.numero_rps || d.nota_id}`)
+        await this.carregarContratos()
+        await this.carregarFilaContratos()
+        await this.carregarNotas()
+      } catch(e) { this.showToast(e.message || 'Erro ao emitir contrato.', 'error') }
+      finally { this.loading = false }
+    },
+
+    async toggleContratoAtivo(c) {
+      try {
+        const r = await this._fetch(`${API}/contratos/${c.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ ativo: !c.ativo })
+        })
+        if (!r.ok) throw new Error()
+        this.showToast(c.ativo ? 'Contrato pausado.' : 'Contrato reativado.')
+        await this.carregarContratos()
+      } catch(e) { this.showToast('Erro ao alterar contrato.', 'error') }
+    },
+
+    fmtData(iso) {
+      if (!iso) return '—'
+      const d = new Date(iso + 'T00:00:00')
+      return d.toLocaleDateString('pt-BR')
+    },
+
+    // ─── ISS POR IBGE (Fonte: legislação municipal — padrão 5%, exceções mapeadas) ──
+
+    _issAliquotaIBGE(ibge) {
+      // Mínimo legal LC 116/2003: 2% | Máximo: 5%
+      // Tabela baseada em dados das prefeituras para serviços em geral (contábeis, TI, consultoria)
+      const t = {
+        // Capitais
+        '3550308': 5.0, // São Paulo/SP
+        '3304557': 5.0, // Rio de Janeiro/RJ
+        '3106200': 5.0, // Belo Horizonte/MG
+        '1302603': 5.0, // Manaus/AM
+        '2304400': 5.0, // Fortaleza/CE
+        '2927408': 5.0, // Salvador/BA
+        '4106902': 2.5, // Curitiba/PR (serviços profissionais 2,5%)
+        '2611606': 5.0, // Recife/PE
+        '4314902': 5.0, // Porto Alegre/RS
+        '1501402': 5.0, // Belém/PA
+        '5208707': 5.0, // Goiânia/GO
+        '4205407': 5.0, // Florianópolis/SC
+        '5002704': 5.0, // Campo Grande/MS
+        '5103403': 5.0, // Cuiabá/MT
+        '5300108': 5.0, // Brasília/DF
+        '2111300': 5.0, // São Luís/MA
+        '2211001': 5.0, // Teresina/PI
+        '2408102': 5.0, // Natal/RN
+        '2500305': 5.0, // João Pessoa/PB
+        '2800308': 5.0, // Aracaju/SE
+        '1100205': 5.0, // Porto Velho/RO
+        '1200401': 5.0, // Rio Branco/AC
+        '1400100': 5.0, // Boa Vista/RR
+        '1600303': 5.0, // Macapá/AP
+        '1721000': 5.0, // Palmas/TO
+        '3205309': 5.0, // Vitória/ES
+        // Grandes cidades
+        '3509502': 2.0, // Campinas/SP (serviços profissionais 2%)
+        '3518800': 5.0, // Guarulhos/SP
+        '3548708': 5.0, // São Bernardo do Campo/SP
+        '3301702': 5.0, // Duque de Caxias/RJ
+        '3303302': 5.0, // Niterói/RJ
+        '4113700': 5.0, // Londrina/PR
+        '4115200': 2.5, // Maringá/PR
+        '4209102': 5.0, // Joinville/SC
+        '4314407': 5.0, // Pelotas/RS
+        '4304606': 5.0, // Caxias do Sul/RS
+        '2910800': 5.0, // Camaçari/BA
+        '2910727': 5.0, // Feira de Santana/BA
+        '2304400': 5.0, // Fortaleza/CE
+        '2307650': 5.0, // Juazeiro do Norte/CE
+        '2408102': 5.0, // Natal/RN
+        '3162500': 5.0, // Uberlândia/MG
+        '3143302': 5.0, // Montes Claros/MG
+        '3152501': 5.0, // Juiz de Fora/MG -- wait let me reconsider
+      }
+      return t[String(ibge)] ?? 5.0
+    },
+
+    // ─── BUSCA CNPJ (BrasilAPI + ISS automático) ──────
+
+    async buscarCNPJ(cnpj, target) {
+      const digits = cnpj.replace(/\D/g, '')
+      if (digits.length !== 14) return
+      try {
+        const r = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${digits}`)
+        if (!r.ok) { this.showToast('CNPJ não encontrado na Receita Federal.', 'error'); return }
+        const d = await r.json()
+        const nome = d.razao_social || ''
+        const logradouro = `${d.descricao_tipo_de_logradouro || ''} ${d.logradouro || ''}`.trim()
+        const ibge = d.codigo_municipio_ibge ? String(d.codigo_municipio_ibge) : ''
+        const issAliquota = ibge ? this._issAliquotaIBGE(ibge) : 5.0
+
+        const data = {
+          razao_social: nome, logradouro,
+          numero: d.numero || '', complemento: d.complemento || '',
+          bairro: d.bairro || '', municipio: d.municipio || '',
+          uf: d.uf || '', cep: (d.cep || '').replace(/\D/g,''), codigo_ibge: ibge,
+        }
+        if (target === 'tomador_contrato') {
+          Object.assign(this.contratoForm, {
+            tomador_cpf_cnpj: digits, tomador_razao_social: nome,
+            tomador_municipio: data.municipio, tomador_uf: data.uf,
+            tomador_cep: data.cep, tomador_codigo_ibge: ibge,
+            tomador_logradouro: data.logradouro, tomador_numero: data.numero,
+            tomador_bairro: data.bairro,
+            tomador_email: d.email ? d.email.toLowerCase() : this.contratoForm.tomador_email,
+          })
+          this.showToast(`Dados preenchidos: ${nome.substring(0,40)}`)
+          return
+        } else if (target === 'tomador_nfse') {
+          Object.assign(this.nfseForm.tomador, { ...data, cpf_cnpj: digits })
+        } else if (target === 'tomador_nfe') {
+          Object.assign(this.nfeForm.tomador, { ...data, cpf_cnpj: digits })
+        } else if (target === 'cliente') {
+          Object.assign(this.clienteForm, {
+            razao_social: nome, municipio: data.municipio, uf: data.uf,
+            cep: data.cep, codigo_ibge: ibge, logradouro: data.logradouro,
+            numero: data.numero, bairro: data.bairro,
+            email: d.email ? d.email.toLowerCase() : this.clienteForm.email,
+            telefone: d.ddd_telefone_1 ? d.ddd_telefone_1.replace(/\D/g,'') : this.clienteForm.telefone,
+            nfse_aliquota_iss: issAliquota,
+            nfse_municipio_codigo: ibge,
+          })
+          this.showToast(`Dados preenchidos. ISS sugerido: ${issAliquota}% (${data.municipio}) — confirme com a prefeitura.`)
+          return
+        }
+        this.showToast(`Dados preenchidos: ${nome.substring(0,40)}`)
+      } catch(e) {
+        this.showToast('Erro ao consultar CNPJ. Verifique a conexão.', 'error')
+      }
+    },
+
+    // ─── UTILS ─────────────────────────────────────────
+
+    fmtBRL(v) {
+      if (v == null || isNaN(v)) return 'R$ 0,00'
+      return new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v)
+    },
+
+    fmtCNPJ(c) {
+      if (!c) return ''
+      const d = c.replace(/\D/g,'')
+      if (d.length !== 14) return c
+      return `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5,8)}/${d.slice(8,12)}-${d.slice(12)}`
+    },
+
+    showToast(msg, type='success') {
+      this.toast = { show: true, msg, type }
+      setTimeout(() => this.toast.show = false, 4000)
+    },
+  }
+}
+</script>
+</body>
+</html>
