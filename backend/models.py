@@ -28,6 +28,15 @@ class ProviderNFSeEnum(str, enum.Enum):
     mock = "mock"            # Demo / desenvolvimento
 
 
+class AnexoSimplesEnum(str, enum.Enum):
+    I    = "I"     # Comércio
+    II   = "II"    # Indústria
+    III  = "III"   # Serviços — CPP inclusa, ISS menor (Fator R ≥ 28% ou atividade fixada)
+    IV   = "IV"    # Serviços — CPP fora do DAS (construção, limpeza, vigilância)
+    V    = "V"     # Serviços — CPP inclusa, maior tributação (Fator R < 28%)
+    III_V = "III_V" # Serviços que oscilam entre III e V conforme Fator R
+
+
 class TipoNotaEnum(str, enum.Enum):
     nfse = "nfse"    # Nota Fiscal de Serviço Eletrônica
     nfe = "nfe"      # Nota Fiscal Eletrônica (produtos, modelo 55)
@@ -62,6 +71,9 @@ class Escritorio(Base):
     limite_notas_mes: Mapped[int] = mapped_column(Integer, default=10)
     notas_emitidas_mes: Mapped[int] = mapped_column(Integer, default=0)
     mes_referencia: Mapped[Optional[str]] = mapped_column(String(7))  # YYYY-MM
+
+    # NFe.io — chave global do escritório (Company ID fica em cada Cliente)
+    nfeio_api_key: Mapped[Optional[str]] = mapped_column(String(200))
 
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     criado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -139,6 +151,15 @@ class Cliente(Base):
     nfse_aliquota_iss: Mapped[Optional[float]] = mapped_column(Float, default=5.0)
     nfse_serie_rps: Mapped[Optional[str]] = mapped_column(String(5), default="RPS")
     nfse_ultimo_numero_rps: Mapped[int] = mapped_column(Integer, default=0)
+    nfse_certificado_path: Mapped[Optional[str]] = mapped_column(String(500))
+    nfse_certificado_senha: Mapped[Optional[str]] = mapped_column(String(200))
+    nfse_certificado_vencimento: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    nfe_certificado_vencimento: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    # Simples Nacional — Anexo e Fator R
+    anexo_simples: Mapped[Optional[str]] = mapped_column(String(10))  # I II III IV V III_V
+    atividade_permite_fator_r: Mapped[bool] = mapped_column(Boolean, default=False)
+    limite_simples: Mapped[float] = mapped_column(Float, default=4_800_000.0)
 
     # Configurações NF-e
     nfe_provider: Mapped[Optional[str]] = mapped_column(String(20), default="mock")  # mock/nfeio/sefaz
@@ -377,6 +398,62 @@ class Contrato(Base):
 
     escritorio: Mapped["Escritorio"] = relationship()
     cliente: Mapped["Cliente"] = relationship()
+
+
+# ---------------------------------------------------------------------------
+# RECEITA HISTÓRICA — Lançamento manual para meses anteriores ao Limio
+# ---------------------------------------------------------------------------
+
+class ReceitaHistorica(Base):
+    """Receita bruta mensal lançada manualmente para meses sem notas no Limio.
+    Usada no cálculo do RBT12 e Fator R. Fonte: PGDAS-D do cliente."""
+    __tablename__ = "receita_historica"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    escritorio_id: Mapped[int] = mapped_column(Integer, ForeignKey("escritorios.id"))
+    cliente_id: Mapped[int] = mapped_column(Integer, ForeignKey("clientes.id"), index=True)
+    competencia: Mapped[str] = mapped_column(String(7), index=True)  # YYYY-MM
+
+    valor_receita: Mapped[float] = mapped_column(Float, default=0.0)
+    # Fonte de onde veio o número (para auditoria)
+    origem: Mapped[str] = mapped_column(String(30), default="pgdas_d")  # pgdas_d / manual / nota_fiscal
+
+    criado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    atualizado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    cliente: Mapped["Cliente"] = relationship()
+    escritorio: Mapped["Escritorio"] = relationship()
+
+
+# ---------------------------------------------------------------------------
+# FOLHA MENSAL — Lançamento pelo contador (base para Fator R)
+# ---------------------------------------------------------------------------
+
+class FolhaMensal(Base):
+    """Valores de folha de pagamento por competência, lançados manualmente pelo contador.
+    Usados para calcular o Fator R (Folha 12m / RBT12) nas atividades dos Anexos III/V."""
+    __tablename__ = "folha_mensal"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    escritorio_id: Mapped[int] = mapped_column(Integer, ForeignKey("escritorios.id"))
+    cliente_id: Mapped[int] = mapped_column(Integer, ForeignKey("clientes.id"), index=True)
+    competencia: Mapped[str] = mapped_column(String(7), index=True)  # YYYY-MM
+
+    valor_salarios: Mapped[float] = mapped_column(Float, default=0.0)
+    valor_pro_labore: Mapped[float] = mapped_column(Float, default=0.0)
+    valor_inss_patronal: Mapped[float] = mapped_column(Float, default=0.0)
+    valor_fgts: Mapped[float] = mapped_column(Float, default=0.0)
+    valor_total: Mapped[float] = mapped_column(Float, default=0.0)  # soma dos anteriores
+
+    # "manual" = lançado pelo contador | "esocial" = importado via DCTFWeb/eSocial no futuro
+    origem: Mapped[str] = mapped_column(String(20), default="manual")
+    observacao: Mapped[Optional[str]] = mapped_column(String(300))
+
+    criado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    atualizado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    cliente: Mapped["Cliente"] = relationship()
+    escritorio: Mapped["Escritorio"] = relationship()
 
 
 class ItemNota(Base):

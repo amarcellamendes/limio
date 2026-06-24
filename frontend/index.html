@@ -58,13 +58,23 @@
 <div x-show="!token" x-cloak class="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary to-primary-dark p-4">
   <div class="w-full max-w-md">
     <div class="text-center mb-8">
-      <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-accent mb-4">
-        <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+      <!-- Logo Limio — ícone moderno navy+teal -->
+      <div class="inline-flex items-center justify-center w-20 h-20 rounded-2xl mb-4" style="background:linear-gradient(135deg,#0891b2 0%,#013957 100%)">
+        <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+          <!-- Documento base -->
+          <path stroke-linecap="round" stroke-linejoin="round" d="M7 3h7l4 4v14a1 1 0 01-1 1H7a1 1 0 01-1-1V4a1 1 0 011-1z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M14 3v4h4"/>
+          <!-- Linhas de nota fiscal -->
+          <line stroke-linecap="round" x1="9" y1="10" x2="15" y2="10"/>
+          <line stroke-linecap="round" x1="9" y1="13" x2="15" y2="13"/>
+          <line stroke-linecap="round" x1="9" y1="16" x2="12" y2="16"/>
+          <!-- Checkmark de aprovação -->
+          <circle fill="#0891b2" stroke="none" cx="16" cy="17" r="3.5"/>
+          <path stroke="white" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M14.5 17l1 1 2-2"/>
         </svg>
       </div>
-      <h1 class="text-3xl font-bold text-white tracking-tight">Limio</h1>
-      <p class="text-blue-200 text-sm mt-1">Emissão de notas fiscais para escritórios contábeis</p>
+      <h1 class="text-4xl font-black text-white tracking-tight" style="letter-spacing:-0.03em">Limio</h1>
+      <p class="text-blue-200 text-sm mt-1 tracking-wide">Todas as notas. Uma só tela.</p>
     </div>
 
     <div class="bg-white rounded-2xl shadow-2xl p-8">
@@ -149,13 +159,16 @@
   <!-- Sidebar -->
   <aside class="w-60 bg-primary flex flex-col flex-shrink-0">
     <div class="p-5 border-b border-primary-light">
-      <div class="flex items-center gap-2">
-        <div class="w-8 h-8 rounded-lg bg-accent flex items-center justify-center">
-          <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style="background:linear-gradient(135deg,#0891b2,#01283d)">
+          <svg class="w-4.5 h-4.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M7 3h7l4 4v14a1 1 0 01-1 1H7a1 1 0 01-1-1V4a1 1 0 011-1z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" d="M14 3v4h4"/>
+            <line stroke-linecap="round" x1="9" y1="10" x2="15" y2="10"/>
+            <line stroke-linecap="round" x1="9" y1="13" x2="15" y2="13"/>
           </svg>
         </div>
-        <span class="text-white font-bold text-sm leading-tight">Emissor NF</span>
+        <span class="text-white font-black text-lg tracking-tight" style="letter-spacing:-0.02em">Limio</span>
       </div>
     </div>
 
@@ -182,6 +195,10 @@
       <div class="pt-2 pb-1 px-4">
         <p class="text-xs text-white/50 uppercase tracking-widest font-semibold">Emissão</p>
       </div>
+      <button @click="goto('apuracao')" :class="page==='apuracao' ? 'active' : ''" class="sl w-full">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 11h.01M12 11h.01M15 11h.01M4 19h16a2 2 0 002-2V7a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+        Apuração de Tributos
+      </button>
       <button @click="goto('contratos')" :class="page==='contratos' ? 'active' : ''" class="sl w-full">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
         Contratos Recorrentes
@@ -945,9 +962,23 @@
               </div>
             </div>
             <div class="flex items-center gap-4 ml-4 flex-shrink-0">
-              <div class="hidden md:flex gap-2 text-xs">
-                <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-600" x-text="c.regime_tributario || '—'"></span>
-                <span class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-mono" x-text="c.nfse_provider"></span>
+              <div class="hidden md:flex flex-col gap-1 text-xs min-w-[160px]">
+                <div class="flex gap-2">
+                  <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-600" x-text="c.regime_tributario || '—'"></span>
+                  <span class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-mono" x-text="c.nfse_provider"></span>
+                </div>
+                <!-- Barra Simples Nacional inline -->
+                <div x-show="c.optante_simples && c._simples" class="w-full">
+                  <div class="flex justify-between text-gray-400 mb-0.5">
+                    <span>Simples</span>
+                    <span :class="c._simples?.pct >= 80 ? 'text-red-600 font-bold' : 'text-gray-500'" x-text="(c._simples?.pct ?? 0) + '%'"></span>
+                  </div>
+                  <div class="w-full bg-gray-200 rounded-full h-1.5">
+                    <div class="h-1.5 rounded-full"
+                         :class="c._simples?.pct >= 95 ? 'bg-red-600' : c._simples?.pct >= 80 ? 'bg-amber-500' : 'bg-green-500'"
+                         :style="'width:' + Math.min(c._simples?.pct??0,100) + '%'"></div>
+                  </div>
+                </div>
               </div>
               <div class="flex gap-1">
                 <button @click="abrirModalCliente(c)" class="btn-secondary text-xs px-3 py-1.5">Editar</button>
@@ -960,6 +991,428 @@
           <p class="text-lg mb-2">Nenhum cliente cadastrado.</p>
           <button @click="abrirModalCliente(null)" class="btn-primary mt-2">Cadastrar primeiro cliente</button>
         </div>
+      </div>
+    </div>
+
+    <!-- ── APURAÇÃO DE TRIBUTOS ── -->
+    <div x-show="page==='apuracao'" class="p-6">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-xl font-bold text-primary">Apuração de Tributos</h2>
+          <p class="text-sm text-gray-500">Totais mensais por tributo e controle do limite Simples Nacional</p>
+        </div>
+      </div>
+
+      <!-- Seleção cliente + ano -->
+      <div class="card mb-6">
+        <div class="grid grid-cols-3 gap-4 items-end">
+          <div>
+            <label class="label">Cliente</label>
+            <select x-model="apuracao.clienteId" class="input" @change="apuracao.dados=null">
+              <option value="">Selecione o cliente...</option>
+              <template x-for="c in clientes" :key="c.id">
+                <option :value="c.id" x-text="c.razao_social"></option>
+              </template>
+            </select>
+          </div>
+          <div>
+            <label class="label">Ano</label>
+            <input type="number" x-model="apuracao.ano" class="input" min="2020" :max="new Date().getFullYear()" />
+          </div>
+          <div>
+            <button @click="carregarApuracao()" :disabled="!apuracao.clienteId || apuracao.carregando"
+                    class="btn-primary w-full flex items-center justify-center gap-2">
+              <svg x-show="apuracao.carregando" class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path></svg>
+              <span x-text="apuracao.carregando ? 'Calculando...' : 'Calcular'"></span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resultado -->
+      <div x-show="apuracao.dados" x-cloak>
+        <!-- Barra Simples Nacional -->
+        <div x-show="apuracao.dados?.optante_simples" class="card mb-6"
+             :class="apuracao.dados?.alerta_simples ? 'border-red-300 bg-red-50' : 'border-green-200'">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-semibold text-gray-700">Limite Simples Nacional</span>
+            <span class="font-bold text-lg" :class="apuracao.dados?.alerta_simples ? 'text-red-600' : 'text-green-700'"
+                  x-text="apuracao.dados?.pct_limite_simples + '% utilizado'"></span>
+          </div>
+          <div class="w-full bg-gray-200 rounded-full h-4 mb-2">
+            <div class="h-4 rounded-full transition-all duration-500"
+                 :class="apuracao.dados?.pct_limite_simples >= 95 ? 'bg-red-600' : apuracao.dados?.pct_limite_simples >= 80 ? 'bg-amber-500' : 'bg-green-500'"
+                 :style="'width:' + Math.min(apuracao.dados?.pct_limite_simples??0,100) + '%'"></div>
+          </div>
+          <div class="flex justify-between text-sm text-gray-600">
+            <span>Receita no ano: <strong x-text="'R$ ' + (apuracao.dados?.receita_ano??0).toLocaleString('pt-BR',{minimumFractionDigits:2})"></strong></span>
+            <span>Limite: <strong x-text="'R$ ' + (apuracao.dados?.limite_simples??0).toLocaleString('pt-BR',{minimumFractionDigits:2})"></strong></span>
+          </div>
+          <p x-show="apuracao.dados?.alerta_simples" class="mt-2 text-sm font-semibold text-red-700">
+            ⚠ Atenção: empresa próxima ao limite do Simples Nacional. Analise a necessidade de planejamento tributário.
+          </p>
+        </div>
+
+        <!-- Análise Fator R -->
+        <div x-show="apuracao.dados?.analise_fator_r" class="card mb-6"
+             :class="apuracao.dados?.analise_fator_r?.atingiu_fator_r ? 'border-green-300 bg-green-50' : 'border-amber-300 bg-amber-50'">
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <span class="font-bold text-gray-800">Fator R — Análise Anexo III × Anexo V</span>
+              <span class="ml-2 text-xs px-2 py-0.5 rounded-full font-bold"
+                    :class="apuracao.dados?.analise_fator_r?.atingiu_fator_r ? 'bg-green-200 text-green-800' : 'bg-amber-200 text-amber-800'"
+                    x-text="apuracao.dados?.analise_fator_r?.atingiu_fator_r ? 'Anexo III aplicado ✓' : 'Anexo V aplicado'"></span>
+            </div>
+            <span class="text-2xl font-black"
+                  :class="apuracao.dados?.analise_fator_r?.atingiu_fator_r ? 'text-green-700' : 'text-amber-700'"
+                  x-text="(apuracao.dados?.analise_fator_r?.fator_r_pct ?? 0).toFixed(1) + '%'"></span>
+          </div>
+          <!-- Barra Fator R -->
+          <div class="w-full bg-gray-200 rounded-full h-3 mb-3 relative">
+            <div class="h-3 rounded-full transition-all"
+                 :class="apuracao.dados?.analise_fator_r?.atingiu_fator_r ? 'bg-green-500' : 'bg-amber-500'"
+                 :style="'width:' + Math.min((apuracao.dados?.analise_fator_r?.fator_r_pct ?? 0) / 50 * 100, 100) + '%'"></div>
+            <!-- Marcação dos 28% -->
+            <div class="absolute top-0 h-3 w-0.5 bg-gray-600" style="left:56%"></div>
+            <span class="absolute -top-5 text-xs text-gray-500 font-semibold" style="left:53%">28%</span>
+          </div>
+          <div class="grid grid-cols-2 gap-4 text-sm mb-3">
+            <div>
+              <span class="text-gray-500">Folha acumulada no ano</span>
+              <div class="font-bold text-gray-800" x-text="'R$ ' + (apuracao.dados?.analise_fator_r?.folha_ano ?? 0).toLocaleString('pt-BR',{minimumFractionDigits:2})"></div>
+            </div>
+            <div>
+              <span class="text-gray-500">Receita acumulada no ano</span>
+              <div class="font-bold text-gray-800" x-text="'R$ ' + (apuracao.dados?.analise_fator_r?.receita_ano ?? 0).toLocaleString('pt-BR',{minimumFractionDigits:2})"></div>
+            </div>
+            <div>
+              <span class="text-gray-500">Alíquota efetiva Anexo III</span>
+              <div class="font-bold text-green-700" x-text="((apuracao.dados?.analise_fator_r?.aliq_efetiva_iii ?? 0)*100).toFixed(2) + '%'"></div>
+            </div>
+            <div>
+              <span class="text-gray-500">Alíquota efetiva Anexo V</span>
+              <div class="font-bold text-amber-700" x-text="((apuracao.dados?.analise_fator_r?.aliq_efetiva_v ?? 0)*100).toFixed(2) + '%'"></div>
+            </div>
+          </div>
+          <!-- Alerta / oportunidade -->
+          <div x-show="!apuracao.dados?.analise_fator_r?.atingiu_fator_r && (apuracao.dados?.analise_fator_r?.diferenca_para_fator_r ?? 0) > 0"
+               class="p-3 bg-amber-100 rounded-lg text-sm text-amber-800">
+            <strong>Oportunidade:</strong> Para atingir o Fator R e migrar para o Anexo III, a folha precisaria ser
+            <strong x-text="'R$ ' + (apuracao.dados?.analise_fator_r?.folha_minima_para_fator_r ?? 0).toLocaleString('pt-BR',{minimumFractionDigits:2})"></strong>
+            (faltam <strong x-text="'R$ ' + (apuracao.dados?.analise_fator_r?.diferenca_para_fator_r ?? 0).toLocaleString('pt-BR',{minimumFractionDigits:2})"></strong>).
+            Economia estimada ao mês:
+            <strong x-text="'R$ ' + (apuracao.dados?.analise_fator_r?.economia_mensal_estimada ?? 0).toLocaleString('pt-BR',{minimumFractionDigits:2})"></strong>.
+          </div>
+          <div x-show="apuracao.dados?.analise_fator_r?.atingiu_fator_r"
+               class="p-3 bg-green-100 rounded-lg text-sm text-green-800">
+            Fator R atingido. Aplicando Anexo III — alíquota menor que o Anexo V.
+            Economia estimada ao mês vs Anexo V:
+            <strong x-text="'R$ ' + (apuracao.dados?.analise_fator_r?.economia_mensal_estimada ?? 0).toLocaleString('pt-BR',{minimumFractionDigits:2})"></strong>.
+          </div>
+        </div>
+
+        <!-- Receita histórica (para novos clientes) -->
+        <div x-show="apuracao.dados?.optante_simples" class="card mb-6">
+          <div class="flex items-center justify-between mb-2">
+            <div>
+              <h3 class="font-bold text-gray-700">Receita Histórica — Meses Anteriores ao Limio</h3>
+              <p class="text-xs text-gray-400">
+                Para clientes novos: lance a receita mensal do PGDAS-D. O sistema usa esses valores no RBT12
+                até que o Limio tenha notas próprias no mês. Meses com notas no Limio ignoram o histórico.
+              </p>
+            </div>
+            <button @click="apuracao.mostrarReceita = !apuracao.mostrarReceita" class="text-xs text-accent underline flex-shrink-0 ml-4"
+                    x-text="apuracao.mostrarReceita ? 'Ocultar' : 'Lançar receita histórica'"></button>
+          </div>
+
+          <!-- Alerta de meses sem dados -->
+          <div x-show="apuracao.dados?.meses?.some(m => m.alerta_rbt12_incompleto)"
+               class="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg mb-3 text-sm text-amber-800">
+            <span class="text-lg flex-shrink-0">⚠</span>
+            <div>
+              <strong>RBT12 incompleto:</strong> alguns meses de apuração não têm 12 meses de receita disponíveis —
+              as notas no Limio ainda não cobrem todo o histórico. Lance a receita dos meses anteriores abaixo
+              para que o DAS e o Fator R sejam calculados corretamente.
+            </div>
+          </div>
+
+          <div x-show="apuracao.mostrarReceita">
+            <div class="flex gap-3 items-end mb-4">
+              <div>
+                <label class="label">Competência</label>
+                <input type="month" x-model="apuracao.receitaForm.competencia" class="input" />
+              </div>
+              <div class="flex-1">
+                <label class="label">Receita bruta do mês (do PGDAS-D)</label>
+                <input type="number" x-model="apuracao.receitaForm.valor_receita" class="input" step="0.01" min="0" placeholder="0,00" />
+              </div>
+              <div>
+                <label class="label">Fonte</label>
+                <select x-model="apuracao.receitaForm.origem" class="input">
+                  <option value="pgdas_d">PGDAS-D</option>
+                  <option value="manual">Lançamento manual</option>
+                </select>
+              </div>
+              <button @click="salvarReceitaHistorica()" class="btn-primary text-sm">Salvar</button>
+            </div>
+
+            <!-- Tabela de receitas históricas lançadas -->
+            <div x-show="apuracao.receitasHistoricas?.length" class="overflow-x-auto">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="border-b text-gray-400">
+                    <th class="pb-1 text-left">Competência</th>
+                    <th class="pb-1 text-right">Receita lançada</th>
+                    <th class="pb-1 text-left ml-2">Fonte</th>
+                    <th class="pb-1 text-center">Status</th>
+                    <th class="pb-1"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="h in apuracao.receitasHistoricas" :key="h.competencia">
+                    <tr class="border-b border-gray-100 hover:bg-gray-50">
+                      <td class="py-1 font-medium" x-text="h.competencia"></td>
+                      <td class="py-1 text-right font-semibold text-primary" x-text="'R$ ' + h.valor_receita.toLocaleString('pt-BR',{minimumFractionDigits:2})"></td>
+                      <td class="py-1 ml-2 text-gray-500" x-text="h.origem === 'pgdas_d' ? 'PGDAS-D' : 'Manual'"></td>
+                      <td class="py-1 text-center">
+                        <span x-show="apuracao.dados?.meses_com_notas_limio?.includes(h.competencia)"
+                              class="text-xs px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">substituído por notas</span>
+                        <span x-show="!apuracao.dados?.meses_com_notas_limio?.includes(h.competencia)"
+                              class="text-xs px-1.5 py-0.5 bg-green-100 text-green-700 rounded">ativo no RBT12</span>
+                      </td>
+                      <td class="py-1 text-right">
+                        <button @click="apuracao.receitaForm = {competencia:h.competencia, valor_receita:h.valor_receita, origem:h.origem}; apuracao.mostrarReceita=true" class="text-blue-500 hover:underline text-xs">editar</button>
+                        <button @click="excluirReceitaHistorica(h.competencia)" class="text-red-500 hover:underline text-xs ml-2">excluir</button>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Folha de pagamento mensal -->
+        <div x-show="apuracao.dados?.atividade_permite_fator_r || apuracao.dados?.optante_simples" class="card mb-6">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-bold text-gray-700">Folha de Pagamento — Lançamento Mensal</h3>
+            <button @click="apuracao.mostrarFolha = !apuracao.mostrarFolha" class="text-xs text-accent underline"
+                    x-text="apuracao.mostrarFolha ? 'Ocultar' : 'Lançar / editar folha'"></button>
+          </div>
+          <p class="text-xs text-gray-400 mb-3">
+            Lançados aqui pelo contador. Usados para calcular o Fator R. Substitui a integração com eSocial
+            (que não tem API pública de consulta) — quando o eSocial tiver API, importaremos automaticamente.
+          </p>
+          <div x-show="apuracao.mostrarFolha">
+            <!-- Seleção de competência para lançar -->
+            <div class="flex gap-3 items-end mb-4">
+              <div>
+                <label class="label">Competência (mês/ano)</label>
+                <input type="month" x-model="apuracao.folhaForm.competencia" class="input" />
+              </div>
+              <button @click="carregarFolha()" class="btn-secondary text-sm">Carregar mês</button>
+            </div>
+            <!-- Formulário de lançamento -->
+            <div x-show="apuracao.folhaForm.competencia" class="grid grid-cols-2 gap-3 p-4 bg-blue-50 rounded-xl mb-3">
+              <div>
+                <label class="label">Salários e ordenados</label>
+                <input type="number" x-model="apuracao.folhaForm.valor_salarios" class="input" step="0.01" min="0" placeholder="0,00" />
+              </div>
+              <div>
+                <label class="label">Pró-labore dos sócios</label>
+                <input type="number" x-model="apuracao.folhaForm.valor_pro_labore" class="input" step="0.01" min="0" placeholder="0,00" />
+              </div>
+              <div>
+                <label class="label">INSS patronal (parte empresa)</label>
+                <input type="number" x-model="apuracao.folhaForm.valor_inss_patronal" class="input" step="0.01" min="0" placeholder="0,00" />
+              </div>
+              <div>
+                <label class="label">FGTS</label>
+                <input type="number" x-model="apuracao.folhaForm.valor_fgts" class="input" step="0.01" min="0" placeholder="0,00" />
+              </div>
+              <div class="col-span-2">
+                <label class="label">Observação (opcional)</label>
+                <input type="text" x-model="apuracao.folhaForm.observacao" class="input" placeholder="ex: férias / 13º / reforço salarial" />
+              </div>
+              <div class="col-span-2 flex items-center justify-between">
+                <div class="text-sm font-semibold text-gray-700">
+                  Total da folha:
+                  <span class="text-primary text-lg" x-text="'R$ ' + ((+apuracao.folhaForm.valor_salarios||0)+(+apuracao.folhaForm.valor_pro_labore||0)+(+apuracao.folhaForm.valor_inss_patronal||0)+(+apuracao.folhaForm.valor_fgts||0)).toLocaleString('pt-BR',{minimumFractionDigits:2})"></span>
+                </div>
+                <button @click="salvarFolha()" class="btn-primary text-sm">Salvar folha do mês</button>
+              </div>
+            </div>
+
+            <!-- Histórico de folhas lançadas -->
+            <div x-show="apuracao.folhas?.length" class="overflow-x-auto">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="border-b text-gray-400">
+                    <th class="pb-1 text-left">Competência</th>
+                    <th class="pb-1 text-right">Salários</th>
+                    <th class="pb-1 text-right">Pró-labore</th>
+                    <th class="pb-1 text-right">INSS Pat.</th>
+                    <th class="pb-1 text-right">FGTS</th>
+                    <th class="pb-1 text-right font-bold">Total</th>
+                    <th class="pb-1"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="f in apuracao.folhas" :key="f.competencia">
+                    <tr class="border-b border-gray-100 hover:bg-gray-50">
+                      <td class="py-1 font-medium" x-text="f.competencia"></td>
+                      <td class="py-1 text-right" x-text="'R$ ' + f.valor_salarios.toLocaleString('pt-BR',{minimumFractionDigits:2})"></td>
+                      <td class="py-1 text-right" x-text="'R$ ' + f.valor_pro_labore.toLocaleString('pt-BR',{minimumFractionDigits:2})"></td>
+                      <td class="py-1 text-right" x-text="'R$ ' + f.valor_inss_patronal.toLocaleString('pt-BR',{minimumFractionDigits:2})"></td>
+                      <td class="py-1 text-right" x-text="'R$ ' + f.valor_fgts.toLocaleString('pt-BR',{minimumFractionDigits:2})"></td>
+                      <td class="py-1 text-right font-bold text-primary" x-text="'R$ ' + f.valor_total.toLocaleString('pt-BR',{minimumFractionDigits:2})"></td>
+                      <td class="py-1 text-right">
+                        <button @click="editarFolha(f)" class="text-blue-500 hover:underline text-xs">editar</button>
+                        <button @click="excluirFolha(f.competencia)" class="text-red-500 hover:underline text-xs ml-2">excluir</button>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Totais anuais -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <div class="card text-center">
+            <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Receita Bruta</div>
+            <div class="text-xl font-bold text-primary" x-text="'R$ ' + (apuracao.dados?.totais?.receita_bruta??0).toLocaleString('pt-BR',{minimumFractionDigits:2})"></div>
+          </div>
+          <div class="card text-center" x-show="apuracao.dados?.optante_simples && apuracao.dados?.totais?.valor_das > 0">
+            <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">DAS Total</div>
+            <div class="text-xl font-bold text-teal-700" x-text="'R$ ' + (apuracao.dados?.totais?.valor_das??0).toLocaleString('pt-BR',{minimumFractionDigits:2})"></div>
+            <div class="text-xs text-gray-400">Simples — via PGDAS-D</div>
+          </div>
+          <div class="card text-center">
+            <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">ISS Retido</div>
+            <div class="text-xl font-bold text-blue-700" x-text="'R$ ' + (apuracao.dados?.totais?.iss??0).toLocaleString('pt-BR',{minimumFractionDigits:2})"></div>
+            <div class="text-xs text-gray-400">Municipal — DAM</div>
+          </div>
+          <div class="card text-center">
+            <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">INSS + IR + CSLL</div>
+            <div class="text-xl font-bold text-red-700" x-text="'R$ ' + ((apuracao.dados?.totais?.inss??0)+(apuracao.dados?.totais?.ir??0)+(apuracao.dados?.totais?.csll??0)).toLocaleString('pt-BR',{minimumFractionDigits:2})"></div>
+            <div class="text-xs text-gray-400">Retenções na fonte</div>
+          </div>
+        </div>
+
+        <!-- Tabela mensal com Simples Nacional -->
+        <div class="card mb-6 overflow-x-auto">
+          <h3 class="font-bold text-gray-700 mb-4">Detalhamento Mensal</h3>
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left border-b border-gray-200">
+                <th class="pb-2 text-gray-500 font-semibold">Competência</th>
+                <th class="pb-2 text-gray-500 font-semibold text-right">Receita</th>
+                <th class="pb-2 text-gray-500 font-semibold text-right" x-show="apuracao.dados?.optante_simples">Folha</th>
+                <th class="pb-2 text-gray-500 font-semibold text-right" x-show="apuracao.dados?.atividade_permite_fator_r">Fator R</th>
+                <th class="pb-2 text-gray-500 font-semibold text-right" x-show="apuracao.dados?.optante_simples">Anexo</th>
+                <th class="pb-2 text-gray-500 font-semibold text-right" x-show="apuracao.dados?.optante_simples">Alíq. Ef.</th>
+                <th class="pb-2 text-gray-500 font-semibold text-right" x-show="apuracao.dados?.optante_simples">DAS</th>
+                <th class="pb-2 text-gray-500 font-semibold text-right">ISS</th>
+                <th class="pb-2 text-gray-500 font-semibold text-right">INSS</th>
+                <th class="pb-2 text-gray-500 font-semibold text-right">IR</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="m in apuracao.dados?.meses ?? []" :key="m.competencia">
+                <tr class="border-b border-gray-100 hover:bg-gray-50"
+                    :class="m.fator_r_atingido === false ? 'bg-amber-50' : ''">
+                  <td class="py-2 font-medium" x-text="m.competencia"></td>
+                  <td class="py-2 text-right font-semibold" x-text="'R$ ' + m.receita_bruta.toLocaleString('pt-BR',{minimumFractionDigits:2})"></td>
+                  <td class="py-2 text-right text-gray-500" x-show="apuracao.dados?.optante_simples"
+                      x-text="m.folha_mes > 0 ? 'R$ ' + m.folha_mes.toLocaleString('pt-BR',{minimumFractionDigits:2}) : '—'"></td>
+                  <td class="py-2 text-right" x-show="apuracao.dados?.atividade_permite_fator_r">
+                    <span :class="m.fator_r >= 0.28 ? 'text-green-700 font-bold' : 'text-amber-600 font-bold'"
+                          x-text="(m.fator_r_pct ?? 0).toFixed(1) + '%'"></span>
+                  </td>
+                  <td class="py-2 text-right" x-show="apuracao.dados?.optante_simples">
+                    <span class="px-1.5 py-0.5 rounded text-xs font-bold"
+                          :class="m.anexo_aplicado === 'III' ? 'bg-green-100 text-green-800' : m.anexo_aplicado === 'V' ? 'bg-amber-100 text-amber-800' : m.anexo_aplicado === 'IV' ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-700'"
+                          x-text="m.anexo_aplicado ? 'Anexo ' + m.anexo_aplicado : '—'"></span>
+                  </td>
+                  <td class="py-2 text-right" x-show="apuracao.dados?.optante_simples"
+                      x-text="m.aliq_efetiva > 0 ? (m.aliq_efetiva*100).toFixed(2) + '%' : '—'"></td>
+                  <td class="py-2 text-right font-bold text-teal-700" x-show="apuracao.dados?.optante_simples"
+                      x-text="m.valor_das > 0 ? 'R$ ' + m.valor_das.toLocaleString('pt-BR',{minimumFractionDigits:2}) : '—'"></td>
+                  <td class="py-2 text-right text-blue-700" x-text="m.iss > 0 ? 'R$ ' + m.iss.toLocaleString('pt-BR',{minimumFractionDigits:2}) : '—'"></td>
+                  <td class="py-2 text-right text-red-600" x-text="m.inss > 0 ? 'R$ ' + m.inss.toLocaleString('pt-BR',{minimumFractionDigits:2}) : '—'"></td>
+                  <td class="py-2 text-right text-red-600" x-text="m.ir > 0 ? 'R$ ' + m.ir.toLocaleString('pt-BR',{minimumFractionDigits:2}) : '—'"></td>
+                </tr>
+              </template>
+              <tr x-show="!apuracao.dados?.meses?.length">
+                <td colspan="10" class="py-6 text-center text-gray-400">Nenhuma nota emitida neste período</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Tabela de referência dos Anexos -->
+        <div class="card mb-6">
+          <h3 class="font-bold text-gray-700 mb-3">Tabela Simples Nacional — Anexos I a V (2024)</h3>
+          <div class="grid grid-cols-1 md:grid-cols-5 gap-3 text-xs">
+            <template x-for="[k, tab] in Object.entries(apuracao.dados?.tabela_referencia ?? {})" :key="k">
+              <div class="border rounded-lg overflow-hidden"
+                   :class="apuracao.dados?.anexo_simples === k || apuracao.dados?.meses?.[0]?.anexo_aplicado === k ? 'border-accent' : 'border-gray-200'">
+                <div class="px-2 py-1.5 font-bold text-white text-center text-xs"
+                     :class="k === 'I' ? 'bg-blue-600' : k === 'II' ? 'bg-purple-600' : k === 'III' ? 'bg-green-600' : k === 'IV' ? 'bg-orange-600' : 'bg-red-600'">
+                  <span x-text="'Anexo ' + k"></span>
+                  <span x-show="!tab.cpp_no_das" class="ml-1 text-yellow-200">⚠ CPP fora</span>
+                </div>
+                <table class="w-full">
+                  <thead><tr class="bg-gray-50"><th class="px-1 py-0.5 text-left text-gray-400">Faixa</th><th class="px-1 py-0.5 text-right text-gray-400">Alíq.</th></tr></thead>
+                  <tbody>
+                    <template x-for="f in tab.faixas" :key="f.faixa">
+                      <tr class="border-t border-gray-100">
+                        <td class="px-1 py-0.5 text-gray-600" x-text="f.faixa + 'ª'"></td>
+                        <td class="px-1 py-0.5 text-right font-semibold" x-text="(f.aliq_nominal*100).toFixed(2) + '%'"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+          </div>
+          <p class="text-xs text-gray-400 mt-2">Alíquota efetiva = (RBT12 × Alíq.Nominal − Parcela Deduzir) ÷ RBT12. Para Fator R: Folha 12m ÷ RBT12 ≥ 28% → Anexo III.</p>
+        </div>
+
+        <!-- Códigos DARF -->
+        <div class="card mb-6">
+          <h3 class="font-bold text-gray-700 mb-3">Códigos para recolhimento</h3>
+          <div class="grid grid-cols-2 gap-3">
+            <template x-for="[k, d] in Object.entries(apuracao.dados?.darf_codigos ?? {})" :key="k">
+              <div class="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                <span class="text-lg font-bold font-mono text-primary bg-blue-100 px-2 py-0.5 rounded" x-text="d.codigo"></span>
+                <div>
+                  <div class="text-sm font-semibold text-gray-700" x-text="d.descricao"></div>
+                  <div class="text-xs text-gray-400">Venc.: <span x-text="d.venc"></span></div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Observações -->
+        <div class="card" x-show="apuracao.dados?.observacoes?.filter(o=>o).length">
+          <h3 class="font-bold text-gray-700 mb-2">Observações</h3>
+          <ul class="space-y-1">
+            <template x-for="obs in (apuracao.dados?.observacoes??[]).filter(o=>o)" :key="obs">
+              <li class="text-sm text-gray-600 flex items-start gap-2">
+                <span class="text-blue-500 mt-0.5">•</span>
+                <span x-text="obs"></span>
+              </li>
+            </template>
+          </ul>
+        </div>
+      </div>
+
+      <div x-show="!apuracao.dados && !apuracao.carregando" class="text-center text-gray-400 py-16">
+        Selecione um cliente e o ano para calcular a apuração de tributos.
       </div>
     </div>
 
@@ -1951,6 +2404,32 @@
             <option :value="false">Não</option>
           </select>
         </div>
+        <div x-show="clienteForm.optante_simples">
+          <label class="label">Limite Simples (R$)</label>
+          <input type="number" x-model="clienteForm.limite_simples" class="input" step="1000" min="0" placeholder="4800000" />
+          <p class="text-xs text-gray-400 mt-1">Padrão: R$ 4.800.000 (2024)</p>
+        </div>
+        <div x-show="clienteForm.optante_simples">
+          <label class="label">Anexo do Simples Nacional</label>
+          <select x-model="clienteForm.anexo_simples" class="input">
+            <option value="">Selecione...</option>
+            <option value="I">Anexo I — Comércio</option>
+            <option value="II">Anexo II — Indústria</option>
+            <option value="III">Anexo III — Serviços (CPP inclusa · ISS reduzido)</option>
+            <option value="IV">Anexo IV — Serviços (CPP fora do DAS · construção/limpeza)</option>
+            <option value="V">Anexo V — Serviços (tributação maior)</option>
+            <option value="III_V">Anexo III ou V — depende do Fator R (atividades mistas)</option>
+          </select>
+        </div>
+        <div x-show="clienteForm.optante_simples && (clienteForm.anexo_simples === 'III_V' || clienteForm.anexo_simples === 'III' || clienteForm.anexo_simples === 'V')" class="col-span-2">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" x-model="clienteForm.atividade_permite_fator_r" class="w-4 h-4 accent-accent" />
+            <span class="text-sm text-gray-700">Atividade permite Fator R (IT, medicina, arquitetura, advocacia, engenharia, consultoria…)</span>
+          </label>
+          <p class="text-xs text-gray-400 mt-1 ml-6">
+            Quando ativado, o sistema calcula automaticamente se Folha÷Receita ≥ 28% e aplica Anexo III em vez de V.
+          </p>
+        </div>
         <div>
           <label class="label">Município</label>
           <input type="text" x-model="clienteForm.municipio" class="input" />
@@ -2030,6 +2509,32 @@
                 <label class="label">Série RPS</label>
                 <input type="text" x-model="clienteForm.nfse_serie_rps" class="input" placeholder="RPS" />
               </div>
+              <!-- Certificado NFS-e Nacional -->
+              <div x-show="clienteForm.nfse_provider === 'nacional'" class="col-span-2 border-t border-blue-200 pt-3 mt-1">
+                <p class="text-xs font-bold text-blue-700 mb-2">Certificado Digital A1 — NFS-e Nacional</p>
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="label">Caminho do certificado (.pfx)</label>
+                    <input type="text" x-model="clienteForm.nfse_certificado_path" class="input" placeholder="/data/certs/empresa.pfx" />
+                  </div>
+                  <div>
+                    <label class="label">Senha do certificado</label>
+                    <input type="password" x-model="clienteForm.nfse_certificado_senha" class="input" />
+                  </div>
+                  <div>
+                    <label class="label">Vencimento do certificado</label>
+                    <input type="date" x-model="clienteForm.nfse_certificado_vencimento" class="input"
+                      :class="clienteForm.nfse_certificado_vencimento && new Date(clienteForm.nfse_certificado_vencimento) < new Date(Date.now()+30*86400000) ? 'border-red-400 bg-red-50' : ''" />
+                    <p x-show="clienteForm.nfse_certificado_vencimento && new Date(clienteForm.nfse_certificado_vencimento) < new Date(Date.now()+30*86400000)"
+                       class="text-xs text-red-600 mt-1">⚠ Certificado vence em menos de 30 dias — renove!</p>
+                  </div>
+                </div>
+              </div>
+              <!-- Token NFS-e Nacional (Gov.br) sem certificado -->
+              <div x-show="clienteForm.nfse_provider === 'nacional'" class="col-span-2">
+                <label class="label">Token Gov.br (alternativo ao certificado)</label>
+                <input type="password" x-model="clienteForm.nfse_api_key" class="input" placeholder="Token obtido no portal Gov.br da empresa" />
+              </div>
             </div>
           </div>
         </div>
@@ -2052,20 +2557,28 @@
                 <input type="text" x-model="clienteForm.nfe_serie" class="input" placeholder="1" />
               </div>
               <div x-show="clienteForm.nfe_provider === 'nfeio'">
-                <label class="label">API Key NFe.io (NF-e)</label>
-                <input type="password" x-model="clienteForm.nfe_api_key" class="input" />
+                <label class="label">Company ID NFe.io — ID da empresa na sua conta NFe.io</label>
+                <input type="text" x-model="clienteForm.nfe_company_id" class="input" placeholder="Obtido no painel NFe.io" />
               </div>
-              <div x-show="clienteForm.nfe_provider === 'nfeio'">
-                <label class="label">Company ID NFe.io (NF-e)</label>
-                <input type="text" x-model="clienteForm.nfe_company_id" class="input" />
-              </div>
-              <div x-show="clienteForm.nfe_provider === 'sefaz'" class="col-span-2">
-                <label class="label">Caminho Certificado A1 (.pfx)</label>
-                <input type="text" x-model="clienteForm.nfe_certificado_path" class="input" placeholder="/certs/empresa.pfx" />
-              </div>
-              <div x-show="clienteForm.nfe_provider === 'sefaz'">
-                <label class="label">Senha do Certificado</label>
-                <input type="password" x-model="clienteForm.nfe_certificado_senha" class="input" />
+              <div x-show="clienteForm.nfe_provider === 'sefaz' || clienteForm.nfe_provider === 'nfeio'" class="col-span-2 border-t border-purple-200 pt-3 mt-1">
+                <p class="text-xs font-bold text-purple-700 mb-2">Certificado Digital A1 — NF-e</p>
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="label">Caminho do certificado (.pfx)</label>
+                    <input type="text" x-model="clienteForm.nfe_certificado_path" class="input" placeholder="/data/certs/empresa-nfe.pfx" />
+                  </div>
+                  <div>
+                    <label class="label">Senha do certificado</label>
+                    <input type="password" x-model="clienteForm.nfe_certificado_senha" class="input" />
+                  </div>
+                  <div>
+                    <label class="label">Vencimento do certificado</label>
+                    <input type="date" x-model="clienteForm.nfe_certificado_vencimento" class="input"
+                      :class="clienteForm.nfe_certificado_vencimento && new Date(clienteForm.nfe_certificado_vencimento) < new Date(Date.now()+30*86400000) ? 'border-red-400 bg-red-50' : ''" />
+                    <p x-show="clienteForm.nfe_certificado_vencimento && new Date(clienteForm.nfe_certificado_vencimento) < new Date(Date.now()+30*86400000)"
+                       class="text-xs text-red-600 mt-1">⚠ Certificado vence em menos de 30 dias — renove!</p>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -2189,9 +2702,18 @@ function app() {
       emite_nfse: true, emite_nfe: false,
       nfse_provider:'mock', nfse_api_key:'', nfse_company_id:'',
       nfse_municipio_codigo:'', nfse_aliquota_iss: 5.0, nfse_serie_rps: 'RPS',
+      nfse_certificado_path:'', nfse_certificado_senha:'', nfse_certificado_vencimento:'',
+      anexo_simples:'', atividade_permite_fator_r: false, limite_simples: 4800000,
       nfe_provider:'mock', nfe_api_key:'', nfe_company_id:'',
-      nfe_serie:'1', nfe_certificado_path:'', nfe_certificado_senha:'',
+      nfe_serie:'1', nfe_certificado_path:'', nfe_certificado_senha:'', nfe_certificado_vencimento:'',
       boleto_ativo: false, boleto_provider:'mock', boleto_api_key:'', boleto_dias_vencimento: 3,
+    },
+    apuracao: {
+      clienteId:'', ano: new Date().getFullYear(), dados: null, carregando: false,
+      mostrarFolha: false, folhas: [],
+      folhaForm: { competencia:'', valor_salarios:0, valor_pro_labore:0, valor_inss_patronal:0, valor_fgts:0, observacao:'' },
+      mostrarReceita: false, receitasHistoricas: [],
+      receitaForm: { competencia:'', valor_receita:0, origem:'pgdas_d' },
     },
 
     // Contratos
@@ -2541,7 +3063,18 @@ function app() {
       this.loadingPage = true
       try {
         const r = await this._fetch(`${API}/clientes`)
-        if (r?.ok) this.clientes = await r.json()
+        if (r?.ok) {
+          this.clientes = await r.json()
+          // Carrega status Simples para optantes em background
+          for (const c of this.clientes) {
+            if (c.optante_simples) {
+              fetch(`/api/apuracao/simples/${c.id}`, { headers: { Authorization: 'Bearer ' + this.token } })
+                .then(r => r.ok ? r.json() : null)
+                .then(d => { if (d) c._simples = d })
+                .catch(() => {})
+            }
+          }
+        }
       } finally { this.loadingPage = false }
     },
 
@@ -2566,12 +3099,19 @@ function app() {
           nfse_municipio_codigo: c.nfse_municipio_codigo || c.codigo_ibge || '',
           nfse_aliquota_iss: c.nfse_aliquota_iss ?? 5.0,
           nfse_serie_rps: c.nfse_serie_rps || 'RPS',
+          nfse_certificado_path: c.nfse_certificado_path || '',
+          nfse_certificado_senha: '',
+          nfse_certificado_vencimento: c.nfse_certificado_vencimento ? c.nfse_certificado_vencimento.substring(0,10) : '',
+          anexo_simples: c.anexo_simples || '',
+          atividade_permite_fator_r: c.atividade_permite_fator_r ?? false,
+          limite_simples: c.limite_simples ?? 4800000,
           nfe_provider: c.nfe_provider || 'mock',
           nfe_api_key: c.nfe_api_key || '',
           nfe_company_id: c.nfe_company_id || '',
           nfe_serie: c.nfe_serie || '1',
           nfe_certificado_path: c.nfe_certificado_path || '',
           nfe_certificado_senha: '',
+          nfe_certificado_vencimento: c.nfe_certificado_vencimento ? c.nfe_certificado_vencimento.substring(0,10) : '',
           boleto_ativo: c.boleto_ativo ?? false,
           boleto_provider: c.boleto_provider || 'mock',
           boleto_api_key: c.boleto_api_key || '',
@@ -2831,6 +3371,119 @@ function app() {
       } catch(e) { this.showToast('Erro ao excluir', 'error') }
     },
 
+    // ─── APURAÇÃO DE TRIBUTOS ──────────────────────────
+
+    async carregarApuracao() {
+      if (!this.apuracao.clienteId) return
+      this.apuracao.carregando = true
+      this.apuracao.dados = null
+      try {
+        const r = await fetch(`/api/apuracao/${this.apuracao.clienteId}/${this.apuracao.ano}`, {
+          headers: { Authorization: 'Bearer ' + this.token }
+        })
+        if (!r.ok) throw new Error()
+        this.apuracao.dados = await r.json()
+        await Promise.all([this.carregarListaFolhas(), this.carregarReceitasHistoricas()])
+      } catch(e) {
+        this.showToast('Erro ao calcular apuração', 'error')
+      } finally {
+        this.apuracao.carregando = false
+      }
+    },
+
+    async carregarListaFolhas() {
+      if (!this.apuracao.clienteId) return
+      try {
+        const r = await fetch(`/api/folha/${this.apuracao.clienteId}`, {
+          headers: { Authorization: 'Bearer ' + this.token }
+        })
+        if (r.ok) this.apuracao.folhas = await r.json()
+      } catch(e) {}
+    },
+
+    async carregarFolha() {
+      const comp = this.apuracao.folhaForm.competencia
+      if (!comp || !this.apuracao.clienteId) return
+      const existente = this.apuracao.folhas.find(f => f.competencia === comp)
+      if (existente) {
+        this.apuracao.folhaForm = { ...existente }
+      } else {
+        this.apuracao.folhaForm = { competencia: comp, valor_salarios:0, valor_pro_labore:0, valor_inss_patronal:0, valor_fgts:0, observacao:'' }
+      }
+    },
+
+    editarFolha(f) {
+      this.apuracao.folhaForm = { competencia: f.competencia, valor_salarios: f.valor_salarios, valor_pro_labore: f.valor_pro_labore, valor_inss_patronal: f.valor_inss_patronal, valor_fgts: f.valor_fgts, observacao: f.observacao || '' }
+      this.apuracao.mostrarFolha = true
+    },
+
+    async salvarFolha() {
+      const { competencia, valor_salarios, valor_pro_labore, valor_inss_patronal, valor_fgts, observacao } = this.apuracao.folhaForm
+      if (!competencia || !this.apuracao.clienteId) return
+      try {
+        const r = await fetch(`/api/folha/${this.apuracao.clienteId}/${competencia}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + this.token },
+          body: JSON.stringify({ valor_salarios:+valor_salarios||0, valor_pro_labore:+valor_pro_labore||0, valor_inss_patronal:+valor_inss_patronal||0, valor_fgts:+valor_fgts||0, observacao }),
+        })
+        if (!r.ok) throw new Error()
+        this.showToast('Folha salva!')
+        await this.carregarListaFolhas()
+        // Recalcula para atualizar Fator R
+        await this.carregarApuracao()
+      } catch(e) {
+        this.showToast('Erro ao salvar folha', 'error')
+      }
+    },
+
+    async excluirFolha(competencia) {
+      if (!confirm(`Excluir folha de ${competencia}?`)) return
+      try {
+        await fetch(`/api/folha/${this.apuracao.clienteId}/${competencia}`, {
+          method: 'DELETE', headers: { Authorization: 'Bearer ' + this.token }
+        })
+        await this.carregarListaFolhas()
+        await this.carregarApuracao()
+      } catch(e) { this.showToast('Erro ao excluir', 'error') }
+    },
+
+    async carregarReceitasHistoricas() {
+      if (!this.apuracao.clienteId) return
+      try {
+        const r = await fetch(`/api/receita-historica/${this.apuracao.clienteId}`, {
+          headers: { Authorization: 'Bearer ' + this.token }
+        })
+        if (r.ok) this.apuracao.receitasHistoricas = await r.json()
+      } catch(e) {}
+    },
+
+    async salvarReceitaHistorica() {
+      const { competencia, valor_receita, origem } = this.apuracao.receitaForm
+      if (!competencia || !this.apuracao.clienteId) return
+      try {
+        const r = await fetch(`/api/receita-historica/${this.apuracao.clienteId}/${competencia}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + this.token },
+          body: JSON.stringify({ valor_receita: +valor_receita || 0, origem }),
+        })
+        if (!r.ok) throw new Error()
+        this.showToast('Receita histórica salva!')
+        this.apuracao.receitaForm = { competencia:'', valor_receita:0, origem:'pgdas_d' }
+        // Recalcula apuração com o novo dado histórico
+        await this.carregarApuracao()
+      } catch(e) { this.showToast('Erro ao salvar receita', 'error') }
+    },
+
+    async excluirReceitaHistorica(competencia) {
+      if (!confirm(`Excluir receita histórica de ${competencia}?`)) return
+      try {
+        await fetch(`/api/receita-historica/${this.apuracao.clienteId}/${competencia}`, {
+          method: 'DELETE', headers: { Authorization: 'Bearer ' + this.token }
+        })
+        await this.carregarApuracao()
+      } catch(e) { this.showToast('Erro ao excluir', 'error') }
+    },
+
     // ─── CONTRATOS RECORRENTES ──────────────────────────
 
     async carregarContratos() {
@@ -3038,11 +3691,14 @@ function app() {
           Object.assign(this.nfeForm.tomador, { ...data, cpf_cnpj: digits })
         } else if (target === 'cliente') {
           Object.assign(this.clienteForm, {
-            razao_social: nome, municipio: data.municipio, uf: data.uf,
+            razao_social: nome,
+            nome_fantasia: d.nome_fantasia || this.clienteForm.nome_fantasia,
+            municipio: data.municipio, uf: data.uf,
             cep: data.cep, codigo_ibge: ibge, logradouro: data.logradouro,
             numero: data.numero, bairro: data.bairro,
             email: d.email ? d.email.toLowerCase() : this.clienteForm.email,
             telefone: d.ddd_telefone_1 ? d.ddd_telefone_1.replace(/\D/g,'') : this.clienteForm.telefone,
+            optante_simples: d.opcao_pelo_simples !== undefined ? d.opcao_pelo_simples : this.clienteForm.optante_simples,
             nfse_aliquota_iss: issAliquota,
             nfse_municipio_codigo: ibge,
           })

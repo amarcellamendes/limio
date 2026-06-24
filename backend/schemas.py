@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional, List
 from datetime import datetime
-from .models import PlanoEnum, RoleEnum, ProviderNFSeEnum, TipoNotaEnum, StatusNotaEnum
+from .models import PlanoEnum, RoleEnum, ProviderNFSeEnum, TipoNotaEnum, StatusNotaEnum, AnexoSimplesEnum
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +99,13 @@ class ClienteCreate(BaseModel):
     nfse_municipio_codigo: Optional[str] = None
     nfse_aliquota_iss: float = 5.0
     nfse_serie_rps: Optional[str] = "RPS"
+    nfse_certificado_path: Optional[str] = None
+    nfse_certificado_senha: Optional[str] = None
+    nfse_certificado_vencimento: Optional[datetime] = None
+    nfe_certificado_vencimento: Optional[datetime] = None
+    anexo_simples: Optional[AnexoSimplesEnum] = None
+    atividade_permite_fator_r: bool = False
+    limite_simples: float = 4_800_000.0
     emite_nfe: bool = False
     nfe_provider: Optional[str] = "mock"
     nfe_api_key: Optional[str] = None
@@ -141,6 +148,13 @@ class ClienteUpdate(BaseModel):
     nfse_municipio_codigo: Optional[str] = None
     nfse_aliquota_iss: Optional[float] = None
     nfse_serie_rps: Optional[str] = None
+    nfse_certificado_path: Optional[str] = None
+    nfse_certificado_senha: Optional[str] = None
+    nfse_certificado_vencimento: Optional[datetime] = None
+    nfe_certificado_vencimento: Optional[datetime] = None
+    anexo_simples: Optional[AnexoSimplesEnum] = None
+    atividade_permite_fator_r: Optional[bool] = None
+    limite_simples: Optional[float] = None
     emite_nfe: Optional[bool] = None
     nfe_provider: Optional[str] = None
     nfe_api_key: Optional[str] = None
@@ -182,6 +196,12 @@ class ClienteResponse(BaseModel):
     nfse_aliquota_iss: Optional[float] = 5.0
     nfse_serie_rps: Optional[str] = "RPS"
     nfse_ultimo_numero_rps: int = 0
+    nfse_certificado_path: Optional[str] = None
+    nfse_certificado_vencimento: Optional[datetime] = None
+    nfe_certificado_vencimento: Optional[datetime] = None
+    anexo_simples: Optional[AnexoSimplesEnum] = None
+    atividade_permite_fator_r: bool = False
+    limite_simples: float = 4_800_000.0
     emite_nfe: bool = False
     nfe_provider: Optional[str] = "mock"
     nfe_api_key: Optional[str] = None
@@ -189,6 +209,7 @@ class ClienteResponse(BaseModel):
     nfe_serie: Optional[str] = "1"
     nfe_ultimo_numero: int = 0
     nfe_certificado_path: Optional[str] = None
+    nfe_certificado_vencimento: Optional[datetime] = None
     boleto_ativo: bool = False
     boleto_provider: Optional[str] = None
     boleto_api_key: Optional[str] = None

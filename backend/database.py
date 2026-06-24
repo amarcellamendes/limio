@@ -34,6 +34,9 @@ def _migrate_sqlite(conn):
         if col not in cols:
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}"))
 
+    # Escritório — novos campos
+    add_col("escritorios", "nfeio_api_key", "VARCHAR(200)")
+
     # Clientes — novos campos
     add_col("clientes", "emite_nfse",              "BOOLEAN DEFAULT 1")
     add_col("clientes", "emite_nfe",               "BOOLEAN DEFAULT 0")
@@ -47,6 +50,46 @@ def _migrate_sqlite(conn):
     add_col("clientes", "logradouro",              "VARCHAR(200)")
     add_col("clientes", "numero",                  "VARCHAR(20)")
     add_col("clientes", "bairro",                  "VARCHAR(100)")
+    add_col("clientes", "nfse_certificado_path",        "VARCHAR(500)")
+    add_col("clientes", "nfse_certificado_senha",       "VARCHAR(200)")
+    add_col("clientes", "nfse_certificado_vencimento",  "DATETIME")
+    add_col("clientes", "nfe_certificado_vencimento",   "DATETIME")
+    add_col("clientes", "limite_simples",               "FLOAT DEFAULT 4800000.0")
+    add_col("clientes", "anexo_simples",                "VARCHAR(10)")
+    add_col("clientes", "atividade_permite_fator_r",    "BOOLEAN DEFAULT 0")
+
+    # Cria tabelas novas se não existirem (create_all já faz isso, mas garantimos via migration)
+    if "receita_historica" not in insp.get_table_names():
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS receita_historica (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                escritorio_id INTEGER NOT NULL REFERENCES escritorios(id),
+                cliente_id INTEGER NOT NULL REFERENCES clientes(id),
+                competencia VARCHAR(7) NOT NULL,
+                valor_receita FLOAT DEFAULT 0.0,
+                origem VARCHAR(30) DEFAULT 'pgdas_d',
+                criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+                atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+    if "folha_mensal" not in insp.get_table_names():
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS folha_mensal (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                escritorio_id INTEGER NOT NULL REFERENCES escritorios(id),
+                cliente_id INTEGER NOT NULL REFERENCES clientes(id),
+                competencia VARCHAR(7) NOT NULL,
+                valor_salarios FLOAT DEFAULT 0.0,
+                valor_pro_labore FLOAT DEFAULT 0.0,
+                valor_inss_patronal FLOAT DEFAULT 0.0,
+                valor_fgts FLOAT DEFAULT 0.0,
+                valor_total FLOAT DEFAULT 0.0,
+                origem VARCHAR(20) DEFAULT 'manual',
+                observacao VARCHAR(300),
+                criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+                atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
     add_col("clientes", "boleto_ativo",            "BOOLEAN DEFAULT 0")
     add_col("clientes", "boleto_provider",         "VARCHAR(20)")
     add_col("clientes", "boleto_api_key",          "VARCHAR(200)")
