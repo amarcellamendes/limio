@@ -1194,6 +1194,27 @@
           </div>
         </div>
 
+        <!-- Receita histórica LP/LR (Lucro Presumido / Real) -->
+        <div x-show="!apuracao.dados?.optante_simples && apuracao.clienteId" class="card mb-6">
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <h3 class="font-bold text-gray-700">Faturamento — Lucro Presumido / Real</h3>
+              <p class="text-xs text-gray-400">
+                Para empresas LP/LR: acompanhe o faturamento mensal para controle de enquadramento
+                e planejamento tributário. Busca via e-CAC (certificado A1) ou lance manualmente.
+              </p>
+            </div>
+            <button @click="buscarFaturamentoLP(apuracao.clienteId)"
+                    class="btn-secondary text-xs px-2 py-1 flex items-center gap-1"
+                    title="Busca no e-CAC usando o certificado A1 do cliente">
+              🔗 Buscar via e-CAC
+            </button>
+          </div>
+          <div class="text-xs text-gray-400 italic">
+            Lance abaixo ou use o botão para buscar automaticamente. Use também a seção "Receita Histórica" abaixo se disponível.
+          </div>
+        </div>
+
         <!-- Receita histórica (para novos clientes) -->
         <div x-show="apuracao.dados?.optante_simples" class="card mb-6">
           <div class="flex items-center justify-between mb-2">
@@ -1822,7 +1843,8 @@
                         x-text="certidoes.statusNome(cert.status)"></span>
                 </td>
                 <td class="py-2">
-                  <div class="flex gap-1">
+                  <div class="flex gap-1 flex-wrap">
+                    <button @click="consultarCertidaoAuto(cert)" class="text-xs bg-teal-600 hover:bg-teal-700 text-white px-2 py-1 rounded-lg">🔍 Auto</button>
                     <button @click="abrirCertidaoModal(cert)" class="btn-secondary text-xs px-2 py-1">Editar</button>
                     <button @click="excluirCertidao(cert.id)" class="text-xs text-red-500 hover:text-red-700 px-2 py-1">✕</button>
                   </div>
@@ -4701,6 +4723,31 @@ function app() {
         this.showToast('Certidão excluída.')
         await this.carregarCertidoes()
       } catch(e) { this.showToast(e.message, 'error') }
+    },
+
+    async consultarCertidaoAuto(cert) {
+      const tipos_suportados = ['cnd_federal','cnd_fgts','cndt_tst','cndt_trt','cnd_estadual','cnd_estadual_nc','cnd_municipal','cnd_falencia']
+      if (!tipos_suportados.includes(cert.tipo)) {
+        this.showToast('Consulta automática não disponível para este tipo.', 'error')
+        return
+      }
+      this.showToast('Consultando ' + (this.certidoes.tiposNomes[cert.tipo] || cert.tipo) + '...')
+      try {
+        const res = await this.api('/api/integracoes/certidao-consultar', 'POST', { certidao_id: cert.id })
+        const status = res.resultado?.status || 'pendente'
+        const statusNome = this.certidoes.statusNome(status)
+        this.showToast(`Consulta concluída: ${statusNome}${res.resultado?.data_validade ? ' | Validade: ' + res.resultado.data_validade : ''}`)
+        await this.carregarCertidoes()
+      } catch(e) { this.showToast(e.message || 'Erro na consulta automática.', 'error') }
+    },
+
+    async buscarFaturamentoLP(clienteId) {
+      const ano = new Date().getFullYear()
+      this.showToast('Buscando faturamento via e-CAC...')
+      try {
+        const res = await this.api(`/api/integracoes/${clienteId}/buscar-faturamento-lp?ano=${ano}`, 'POST', {})
+        this.showToast(res.aviso || 'Busca concluída.')
+      } catch(e) { this.showToast(e.message || 'Erro ao buscar faturamento.', 'error') }
     },
 
     async confirmarSenhaIntegracao() {
