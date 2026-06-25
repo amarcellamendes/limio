@@ -123,10 +123,11 @@ async def upload_certificado(
     cliente_id: int,
     tipo: str,
     arquivo: UploadFile = File(...),
+    senha: str = "",
     escritorio: Escritorio = Depends(get_escritorio_atual),
     db: AsyncSession = Depends(get_db),
 ):
-    """Faz upload de certificado A1 (.pfx) para NFS-e ou NF-e."""
+    """Faz upload de certificado A1 (.pfx) para NFS-e ou NF-e, extraindo a data de validade."""
     if tipo not in ("nfse", "nfe"):
         raise HTTPException(400, "Tipo deve ser 'nfse' ou 'nfe'.")
     if not arquivo.filename.lower().endswith(".pfx"):
@@ -144,13 +145,36 @@ async def upload_certificado(
     with open(caminho, "wb") as f:
         f.write(conteudo)
 
+    # Extrai data de validade do certificado
+    vencimento_str = None
+    vencimento_date = None
+    try:
+        from cryptography.hazmat.primitives.serialization.pkcs12 import load_pkcs12
+        senha_bytes = senha.encode("utf-8") if senha else b""
+        p12 = load_pkcs12(conteudo, senha_bytes)
+        cert = p12.cert.certificate if p12.cert else None
+        if cert:
+            try:
+                dt = cert.not_valid_after_utc
+            except AttributeError:
+                import datetime as _dt
+                dt = cert.not_valid_after.replace(tzinfo=_dt.timezone.utc)
+            vencimento_date = dt.date()
+            vencimento_str = vencimento_date.isoformat()
+    except Exception:
+        pass  # senha errada ou cert inválido — salva sem vencimento
+
     if tipo == "nfse":
         cliente.nfse_certificado_path = caminho
+        if vencimento_date:
+            cliente.nfse_certificado_vencimento = vencimento_date
     else:
         cliente.nfe_certificado_path = caminho
+        if vencimento_date:
+            cliente.nfe_certificado_vencimento = vencimento_date
 
     await db.commit()
-    return {"ok": True, "caminho": caminho, "nome": nome, "tamanho": len(conteudo)}
+    return {"ok": True, "caminho": caminho, "nome": nome, "tamanho": len(conteudo), "vencimento": vencimento_str}
 
 
 async def _get_cliente_ou_404(

@@ -3012,17 +3012,26 @@ function app() {
       if (!file) return
       this.uploadingCert[tipo] = true
       try {
+        const senha = tipo === 'nfse'
+          ? (this.clienteForm.nfse_certificado_senha || '')
+          : (this.clienteForm.nfe_certificado_senha || '')
         const fd = new FormData()
         fd.append('arquivo', file)
-        const r = await fetch(`${API}/clientes/${clienteId}/certificado/${tipo}`, {
+        const url = `${API}/clientes/${clienteId}/certificado/${tipo}?senha=${encodeURIComponent(senha)}`
+        const r = await fetch(url, {
           method: 'POST',
           headers: { Authorization: `Bearer ${this.token}` },
           body: fd,
         })
         if (r.ok) {
           const d = await r.json()
-          if (tipo === 'nfse') this.clienteForm.nfse_certificado_path = d.caminho
-          else this.clienteForm.nfe_certificado_path = d.caminho
+          if (tipo === 'nfse') {
+            this.clienteForm.nfse_certificado_path = d.caminho
+            if (d.vencimento) this.clienteForm.nfse_certificado_vencimento = d.vencimento
+          } else {
+            this.clienteForm.nfe_certificado_path = d.caminho
+            if (d.vencimento) this.clienteForm.nfe_certificado_vencimento = d.vencimento
+          }
           this.pendingCerts[tipo] = null
           this.pendingCertNames[tipo] = ''
         }
