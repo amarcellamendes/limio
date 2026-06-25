@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import List
+from datetime import date, timedelta
 import os
 
 from ..database import get_db
@@ -116,6 +117,45 @@ async def resumo_cliente(
         "notas_emitidas": emitidas.scalar() or 0,
         "valor_total_emitido": valor.scalar() or 0.0,
     }
+
+
+@router.get("/certificados-vencendo")
+async def certificados_vencendo(
+    dias: int = Query(default=60, ge=1, le=365),
+    escritorio: Escritorio = Depends(get_escritorio_atual),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retorna clientes com certificados vencidos ou prestes a vencer."""
+    hoje = date.today()
+    limite = hoje + timedelta(dias)
+    result = await db.execute(
+        select(Cliente).where(Cliente.escritorio_id == escritorio.id, Cliente.ativo == True)
+    )
+    alertas = []
+    for c in result.scalars().all():
+        for tipo, path_attr, venc_attr in [
+            ("NFS-e", "nfse_certificado_path", "nfse_certificado_vencimento"),
+            ("NF-e",  "nfe_certificado_path",  "nfe_certificado_vencimento"),
+        ]:
+            path = getattr(c, path_attr, None)
+            venc = getattr(c, venc_attr, None)
+            if not path or not venc:
+                continue
+            venc_date = venc.date() if hasattr(venc, "date") else venc
+            if venc_date <= limite:
+                dias_rest = (venc_date - hoje).days
+                alertas.append({
+                    "cliente_id": c.id,
+                    "razao_social": c.razao_social,
+                    "nome_fantasia": c.nome_fantasia,
+                    "tipo": tipo,
+                    "vencimento": venc_date.isoformat(),
+                    "dias_restantes": dias_rest,
+                    "vencido": dias_rest < 0,
+                    "perigo": dias_rest <= 30,
+                })
+    alertas.sort(key=lambda x: x["vencimento"])
+    return alertas
 
 
 @router.post("/{cliente_id}/certificado/{tipo}")

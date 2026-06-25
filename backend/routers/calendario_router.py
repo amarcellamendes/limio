@@ -13,6 +13,11 @@ router = APIRouter(prefix="/api/calendario", tags=["Calendário Fiscal"])
 
 
 def _clientes_para_dict(clientes):
+    def _fmt(val):
+        if val is None:
+            return None
+        return val.date().isoformat() if hasattr(val, "date") else str(val)[:10]
+
     return [
         {
             "id": c.id,
@@ -22,6 +27,10 @@ def _clientes_para_dict(clientes):
             "uf": c.uf,
             "municipio": c.municipio,
             "codigo_ibge": c.codigo_ibge,
+            "nfse_certificado_path": getattr(c, "nfse_certificado_path", None),
+            "nfe_certificado_path":  getattr(c, "nfe_certificado_path", None),
+            "nfse_certificado_vencimento": _fmt(getattr(c, "nfse_certificado_vencimento", None)),
+            "nfe_certificado_vencimento":  _fmt(getattr(c, "nfe_certificado_vencimento", None)),
         }
         for c in clientes
     ]

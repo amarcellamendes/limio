@@ -117,11 +117,12 @@ def iss_dia(codigo_ibge: Optional[str]) -> int:
 # ─── Cores por categoria ──────────────────────────────────────────────────
 
 CORES = {
-    "federal":       "#013957",  # azul primário
-    "previdenciario":"#d88d2a",  # laranja
-    "estadual":      "#16a34a",  # verde
-    "municipal":     "#7c3aed",  # roxo
-    "acessoria":     "#64748b",  # cinza
+    "federal":       "#013957",
+    "previdenciario":"#d88d2a",
+    "estadual":      "#16a34a",
+    "municipal":     "#7c3aed",
+    "acessoria":     "#64748b",
+    "certificado":   "#dc2626",  # vermelho
 }
 
 
@@ -337,6 +338,47 @@ def gerar_eventos(
             f"ISS — DMS / Guia ({mun_nome})",
             f"Competência {comp_mes:02d}/{comp_ano}. ISS vence dia {dia_iss} no município.",
             "municipal", cli_list(clts), ["todos"])
+
+    # ── CERTIFICADOS DIGITAIS ──────────────────────────────────────────────
+    for c in clientes:
+        nome = c.get("nome_fantasia") or c["razao_social"]
+        cli = [{"id": c["id"], "nome": c["razao_social"]}]
+        for tipo, path_key, venc_key in [
+            ("NFS-e", "nfse_certificado_path", "nfse_certificado_vencimento"),
+            ("NF-e",  "nfe_certificado_path",  "nfe_certificado_vencimento"),
+        ]:
+            if not c.get(path_key):
+                continue
+            venc_str = c.get(venc_key)
+            if not venc_str:
+                continue
+            try:
+                venc = date.fromisoformat(str(venc_str)[:10])
+            except ValueError:
+                continue
+            # Evento no dia do vencimento
+            if venc.year == ano and venc.month == mes:
+                eventos.append({
+                    "data": venc.isoformat(),
+                    "descricao": f"Certificado A1 {tipo} vence — {nome}",
+                    "detalhes": f"O certificado digital A1 ({tipo}) de {nome} vence hoje. Providencie a renovação imediatamente.",
+                    "categoria": "certificado",
+                    "cor": "#dc2626",
+                    "clientes": cli,
+                    "regime_alvo": ["todos"],
+                })
+            # Aviso 30 dias antes
+            aviso = venc - timedelta(30)
+            if aviso.year == ano and aviso.month == mes:
+                eventos.append({
+                    "data": aviso.isoformat(),
+                    "descricao": f"Certificado A1 {tipo} vence em 30 dias — {nome}",
+                    "detalhes": f"O certificado digital A1 ({tipo}) de {nome} vence em {venc.strftime('%d/%m/%Y')}. Solicite a renovação.",
+                    "categoria": "certificado",
+                    "cor": "#f59e0b",
+                    "clientes": cli,
+                    "regime_alvo": ["todos"],
+                })
 
     # Ordena por data
     eventos.sort(key=lambda e: e["data"])
