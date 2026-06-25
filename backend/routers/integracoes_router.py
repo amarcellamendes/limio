@@ -51,9 +51,9 @@ async def buscar_pgdas(
         raise HTTPException(503, "Módulo de automação não disponível.")
 
     try:
-        resultado = await _run_playwright(
+        resultado = await _run_playwright_multi(
             cert_pem, key_pem,
-            "https://www8.receita.fazenda.gov.br",
+            ["https://www8.receita.fazenda.gov.br", "https://cav.receita.fazenda.gov.br"],
             lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano),
         )
         # Salva receitas no banco
@@ -81,9 +81,10 @@ async def buscar_esocial(
         raise HTTPException(503, "Módulo de automação não disponível.")
 
     try:
-        resultado = await _run_playwright(
+        resultado = await _run_playwright_multi(
             cert_pem, key_pem,
-            "https://empregador.esocial.gov.br",
+            ["https://empregador.esocial.gov.br", "https://login.esocial.gov.br",
+             "https://cav.receita.fazenda.gov.br"],
             lambda p, c: _tarefa_esocial(p, c, cliente.cnpj, ano),
         )
         for f in resultado.get("folhas", []):
@@ -489,20 +490,38 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int) -> dict:
     """
     cnpj_limpo = re.sub(r"\D", "", cnpj)
     receitas: list[dict] = []
-    debug_url = ""
 
-    # 1. Acessa portal principal do Simples Nacional (não o emPGDAS direto)
+    # 1. Autentica via e-CAC primeiro (certificado é apresentado aqui)
+    await page.goto(
+        "https://cav.receita.fazenda.gov.br/autenticacao/login",
+        wait_until="domcontentloaded",
+        timeout=_PGDAS_TIMEOUT,
+    )
+    await page.wait_for_timeout(3000)
+
+    # Seleciona "Certificado Digital" se houver opção
+    for sel in ["a:has-text('Certificado Digital')", "button:has-text('Certificado Digital')",
+                "input[value*='ertificado']", "#btnCertificado"]:
+        try:
+            el = page.locator(sel).first
+            if await el.count() > 0:
+                await el.click()
+                await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                await page.wait_for_timeout(2000)
+                break
+        except Exception:
+            pass
+
+    # 2. Navega para o Simples Nacional após autenticação
     await page.goto(
         "https://www8.receita.fazenda.gov.br/SimplesNacional/",
         wait_until="domcontentloaded",
         timeout=_PGDAS_TIMEOUT,
     )
     await page.wait_for_timeout(3000)
-    debug_url = page.url
 
-    # 2. Se houver seleção de CNPJ (certificado multiempresa), seleciona o correto
+    # 3. Seleção de CNPJ (certificado multiempresa)
     try:
-        await page.wait_for_selector(f"text={cnpj_limpo[:8]}", timeout=4000)
         el = page.locator(f"a:has-text('{cnpj_limpo[:8]}')").first
         if await el.count() > 0:
             await el.click()
@@ -511,10 +530,11 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int) -> dict:
     except Exception:
         pass
 
-    # 3. Tenta navegar para a consulta de competências pelo menu
+    # 4. Navega pelos links do menu até encontrar dados
     menu_links = [
-        "a:has-text('PGDAS')", "a:has-text('Consulta')", "a:has-text('Declarações')",
-        "a:has-text('Extrato')", "a:has-text('Apuração')", "a:has-text('Competências')",
+        "a:has-text('PGDAS')", "a:has-text('PGDAS-D')",
+        "a:has-text('Consulta')", "a:has-text('Declarações')",
+        "a:has-text('Extrato')", "a:has-text('Apuração')",
     ]
     for sel in menu_links:
         try:
@@ -590,12 +610,13 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int) -> dict:
         except Exception:
             pass
 
+    debug_url = page.url  # URL atual após toda navegação
     aviso = (
         f"Dados extraídos: {len(receitas)} competência(s) de {ano}."
         if receitas
         else (
-            f"Acesso ao PGDAS-D estabelecido (URL: {debug_url}). "
-            "Nenhuma declaração de {ano} encontrada — pode ser que o ano ainda não tenha "
+            f"Acesso ao PGDAS-D estabelecido (URL final: {debug_url}). "
+            f"Nenhuma declaração de {ano} encontrada — pode ser que o ano ainda não tenha "
             "declarações transmitidas, ou o portal exige navegação manual adicional."
         )
     )
