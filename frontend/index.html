@@ -3340,7 +3340,11 @@ function app() {
           ? `${API}/clientes/${this.modalCliente.id}`
           : `${API}/clientes`
         const method = this.modalCliente.editando ? 'PUT' : 'POST'
-        const r = await this._fetch(url, { method, body: JSON.stringify(this.clienteForm) })
+        // Campos de data: string vazia → null para evitar erro de validação
+        const payload = { ...this.clienteForm }
+        const dateFields = ['nfse_certificado_vencimento', 'nfe_certificado_vencimento']
+        dateFields.forEach(f => { if (!payload[f]) payload[f] = null })
+        const r = await this._fetch(url, { method, body: JSON.stringify(payload) })
         const d = await r.json()
         if (!r.ok) {
           const detail = d.detail
