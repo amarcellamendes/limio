@@ -178,7 +178,8 @@ def _migrate_sqlite(conn):
                 atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """))
-    add_col("clientes", "ultimo_nsu_nfe",           "VARCHAR(20) DEFAULT '0'")
+    add_col("clientes", "ultimo_nsu_nfe",            "VARCHAR(20) DEFAULT '0'")
+    add_col("clientes", "ultimo_nsu_nfse",           "VARCHAR(20) DEFAULT '0'")
     add_col("clientes", "boleto_ativo",            "BOOLEAN DEFAULT 0")
     add_col("clientes", "boleto_provider",         "VARCHAR(20)")
     add_col("clientes", "boleto_api_key",          "VARCHAR(200)")

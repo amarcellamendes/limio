@@ -447,7 +447,121 @@ async def sincronizar_cliente(
                 "aviso": "Configure o caminho do certificado A1 no cadastro do cliente para sincronizar com a SEFAZ.",
             }
 
-    return {"importados": importados, "mensagem": f"{importados} documentos importados"}
+    # ── Sync NFS-e recebidas (Nacional / ABRASF / SP) ──────────────────────────
+    if cert_path and cert_senha and os.path.isfile(cert_path):
+        nfse_importados = await _sync_nfse_recebidas(db, cliente, escritorio, cert_path, cert_senha)
+        importados += nfse_importados
+
+    return {"importados": importados, "mensagem": f"{importados} documento(s) importado(s)"}
+
+
+async def _sync_nfse_recebidas(db, cliente, escritorio, cert_path: str, cert_senha: str) -> int:
+    """
+    Consulta NFS-e recebidas como tomador via:
+    1. NFS-e Nacional SEFAZ (se o município do cliente aderiu)
+    2. WebService ABRASF municipal (demais municípios com URL cadastrada)
+    3. São Paulo (sistema próprio)
+    """
+    from ..data.municipios_nfse import get_sistema_nfse
+    from ..config import settings
+
+    ibge = cliente.codigo_ibge or ""
+    info_mun = get_sistema_nfse(ibge) if ibge else None
+    sistema  = info_mun.get("sistema") if info_mun else None
+    producao = not settings.MOCK_MODE
+
+    nfse_docs: list[dict] = []
+
+    try:
+        if sistema == "nacional" or not sistema:
+            # Nacional cobre Manaus e municípios aderidos; tenta sempre quando há cert
+            from ..services.nfse_nacional_service import consultar_nfse_nacional
+            ultimo_nsu = cliente.ultimo_nsu_nfse or "0"
+            res = await consultar_nfse_nacional(
+                cnpj=cliente.cnpj,
+                cert_path=cert_path,
+                cert_senha=cert_senha,
+                ultimo_nsu=ultimo_nsu,
+                producao=producao,
+            )
+            if res.get("cstat") == "137":
+                nfse_docs = res.get("nfse", [])
+                novo_nsu = res.get("ultimo_nsu", ultimo_nsu)
+                if novo_nsu != ultimo_nsu:
+                    cliente.ultimo_nsu_nfse = novo_nsu
+
+        elif sistema == "sp":
+            from ..services.nfse_sp_service import consultar_nfse_sp
+            nfse_docs = await consultar_nfse_sp(
+                cnpj=cliente.cnpj,
+                cert_path=cert_path,
+                cert_senha=cert_senha,
+                im_tomador=cliente.im,
+            )
+
+        elif sistema == "abrasf" and info_mun and info_mun.get("url"):
+            from ..services.nfse_abrasf_service import consultar_nfse_abrasf
+            nfse_docs = await consultar_nfse_abrasf(
+                wsdl_url=info_mun["url"],
+                cnpj=cliente.cnpj,
+                cert_path=cert_path,
+                cert_senha=cert_senha,
+                im=cliente.im,
+                producao=producao,
+            )
+
+    except Exception:
+        return 0  # Falha silenciosa; NF-e já foi sincronizada, NFS-e fica para próxima tentativa
+
+    importados = 0
+    for campos in nfse_docs:
+        if not campos:
+            continue
+        chave = campos.get("chave") or ""
+        if chave:
+            dup = await db.execute(
+                select(DocumentoRecebido.id).where(
+                    DocumentoRecebido.escritorio_id == escritorio.id,
+                    DocumentoRecebido.chave_acesso == chave,
+                )
+            )
+            if dup.scalar_one_or_none():
+                continue
+
+        novo = DocumentoRecebido(
+            escritorio_id=escritorio.id,
+            cliente_id=cliente.id,
+            tipo=TipoNotaEnum.nfse,
+            origem="sefaz_nfse",
+            chave_acesso=chave or None,
+            numero=campos.get("numero"),
+            serie=campos.get("serie"),
+            data_emissao=campos.get("data_emissao"),
+            emitente_cnpj=campos.get("emitente_cnpj"),
+            emitente_razao_social=campos.get("emitente_razao_social"),
+            emitente_uf=campos.get("emitente_uf"),
+            emitente_municipio=campos.get("emitente_municipio"),
+            valor_total=campos.get("valor_total"),
+            natureza_operacao=campos.get("natureza_operacao"),
+            status_manifestacao=campos.get("status_manifestacao", "ciencia_operacao"),
+            xml_content=campos.get("xml_content"),
+        )
+        db.add(novo)
+        await upsert_fornecedor(
+            db, escritorio.id,
+            cnpj=campos.get("emitente_cnpj") or "",
+            razao_social=campos.get("emitente_razao_social") or "",
+            uf=campos.get("emitente_uf"),
+            municipio=campos.get("emitente_municipio"),
+            valor_nota=campos.get("valor_total") or 0.0,
+            data_nota=campos.get("data_emissao"),
+        )
+        importados += 1
+
+    if importados:
+        await db.commit()
+
+    return importados
 
 
 # ---------------------------------------------------------------------------
