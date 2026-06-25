@@ -9,7 +9,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from ..database import get_db
-from ..models import Nota, Cliente, Escritorio, StatusNotaEnum, FolhaMensal, ReceitaHistorica
+from ..models import Nota, Cliente, Escritorio, StatusNotaEnum, FolhaMensal, ReceitaHistorica, IcmsMensal
 from ..auth import get_escritorio_atual
 
 router = APIRouter(tags=["apuracao"])
@@ -135,6 +135,13 @@ class FolhaInput(BaseModel):
 class ReceitaHistoricaInput(BaseModel):
     valor_receita: float
     origem: str = "pgdas_d"  # pgdas_d / manual
+
+
+class IcmsInput(BaseModel):
+    credito: float = 0.0
+    debito: float = 0.0
+    observacao: Optional[str] = None
+    origem: str = "manual"
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +381,19 @@ async def apuracao_anual(
     receita_historica_por_mes = {h.competencia: (h.valor_receita, h.origem)
                                   for h in q_hist.scalars().all()}
 
+    # ICMS: busca crédito/débito por mês do ano
+    q_icms = await db.execute(
+        select(IcmsMensal).where(
+            IcmsMensal.escritorio_id == escritorio.id,
+            IcmsMensal.cliente_id == cliente_id,
+            IcmsMensal.competencia >= f"{ano}-01",
+            IcmsMensal.competencia <= f"{ano}-12",
+        )
+    )
+    icms_por_mes = {i.competencia: {"credito": i.credito, "debito": i.debito, "saldo": i.saldo,
+                                     "observacao": i.observacao}
+                   for i in q_icms.scalars().all()}
+
     # ── Agrupa receita por mês: notas reais têm prioridade sobre histórico ──
     receita_por_mes: dict[str, float] = {}
     meses_com_notas: set[str] = set()
@@ -435,6 +455,11 @@ async def apuracao_anual(
         das_info = _calcular_aliquota_efetiva(rbt12, anexo) if anexo else None
         valor_das = round(m["receita_bruta"] * (das_info["aliq_efetiva"] if das_info else 0), 2)
 
+        icms_mes = icms_por_mes.get(mes, {})
+        icms_credito = icms_mes.get("credito", 0.0)
+        icms_debito  = icms_mes.get("debito", 0.0)
+        icms_saldo   = icms_mes.get("saldo", round(icms_debito - icms_credito, 2))
+
         m.update({
             "rbt12": rbt12,
             "folha_mes": todas_folhas.get(mes, 0.0),
@@ -450,6 +475,10 @@ async def apuracao_anual(
             "cpp_no_das": TABELAS_SIMPLES.get(anexo, {}).get("cpp_no_das", True) if anexo else True,
             "meses_sem_dados_rbt12": len(meses_sem_dados),
             "alerta_rbt12_incompleto": len(meses_sem_dados) > 0,
+            "icms_credito": icms_credito,
+            "icms_debito": icms_debito,
+            "icms_saldo": icms_saldo,
+            "icms_observacao": icms_mes.get("observacao"),
             "total_tributos": round(
                 m["iss"] + m["pis"] + m["cofins"] + m["inss"] + m["ir"] + m["csll"], 2
             ),
@@ -460,7 +489,8 @@ async def apuracao_anual(
 
     # ── Totais anuais ────────────────────────────────────────────────────────
     totais = {k: round(sum(m[k] for m in meses_lista), 2)
-              for k in ["receita_bruta", "iss", "pis", "cofins", "inss", "ir", "csll", "valor_das"]}
+              for k in ["receita_bruta", "iss", "pis", "cofins", "inss", "ir", "csll",
+                        "valor_das", "icms_credito", "icms_debito", "icms_saldo"]}
     totais["total_tributos"] = round(
         sum(totais[k] for k in ["iss", "pis", "cofins", "inss", "ir", "csll"]), 2
     )
@@ -625,3 +655,81 @@ async def ranking_simples(
 
     ranking.sort(key=lambda x: x["pct"], reverse=True)
     return ranking
+
+
+# ---------------------------------------------------------------------------
+# ICMS Mensal — crédito / débito por competência
+# ---------------------------------------------------------------------------
+
+@router.get("/api/icms/{cliente_id}")
+async def listar_icms(
+    cliente_id: int,
+    escritorio: Escritorio = Depends(get_escritorio_atual),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(
+        select(IcmsMensal)
+        .where(IcmsMensal.cliente_id == cliente_id, IcmsMensal.escritorio_id == escritorio.id)
+        .order_by(IcmsMensal.competencia.desc()).limit(36)
+    )
+    return [{"id": i.id, "competencia": i.competencia, "credito": i.credito,
+             "debito": i.debito, "saldo": i.saldo, "observacao": i.observacao}
+            for i in r.scalars().all()]
+
+
+@router.post("/api/icms/{cliente_id}/{competencia}")
+async def salvar_icms(
+    cliente_id: int,
+    competencia: str,
+    body: IcmsInput,
+    escritorio: Escritorio = Depends(get_escritorio_atual),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(
+        select(IcmsMensal).where(
+            IcmsMensal.cliente_id == cliente_id,
+            IcmsMensal.escritorio_id == escritorio.id,
+            IcmsMensal.competencia == competencia,
+        )
+    )
+    icms = r.scalar_one_or_none()
+    saldo = round(body.debito - body.credito, 2)
+    if icms:
+        icms.credito = body.credito
+        icms.debito = body.debito
+        icms.saldo = saldo
+        icms.observacao = body.observacao
+        icms.origem = body.origem
+        icms.atualizado_em = datetime.utcnow()
+    else:
+        icms = IcmsMensal(
+            escritorio_id=escritorio.id, cliente_id=cliente_id,
+            competencia=competencia, credito=body.credito,
+            debito=body.debito, saldo=saldo,
+            observacao=body.observacao, origem=body.origem,
+        )
+        db.add(icms)
+    await db.commit()
+    return {"ok": True, "competencia": competencia, "saldo": saldo}
+
+
+@router.delete("/api/icms/{cliente_id}/{competencia}")
+async def excluir_icms(
+    cliente_id: int,
+    competencia: str,
+    escritorio: Escritorio = Depends(get_escritorio_atual),
+    db: AsyncSession = Depends(get_db),
+):
+    r = await db.execute(
+        select(IcmsMensal).where(
+            IcmsMensal.cliente_id == cliente_id,
+            IcmsMensal.escritorio_id == escritorio.id,
+            IcmsMensal.competencia == competencia,
+        )
+    )
+    icms = r.scalar_one_or_none()
+    if not icms:
+        raise HTTPException(404, "Registro não encontrado.")
+    await db.delete(icms)
+    await db.commit()
+    return {"ok": True}

@@ -82,6 +82,47 @@ def _migrate_sqlite(conn):
     add_col("contratos", "obra_endereco",       "VARCHAR(300)")
     add_col("contratos", "obra_inss_aliquota",  "FLOAT DEFAULT 0")
 
+    # Fornecedores
+    if "fornecedores" not in insp.get_table_names():
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS fornecedores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                escritorio_id INTEGER NOT NULL REFERENCES escritorios(id),
+                cnpj VARCHAR(18) NOT NULL,
+                razao_social VARCHAR(300) NOT NULL,
+                nome_fantasia VARCHAR(300),
+                uf VARCHAR(2),
+                municipio VARCHAR(100),
+                email VARCHAR(200),
+                telefone VARCHAR(30),
+                categoria VARCHAR(100),
+                ativo BOOLEAN DEFAULT 1,
+                total_notas INTEGER DEFAULT 0,
+                valor_total_notas FLOAT DEFAULT 0.0,
+                ultima_nota_em DATETIME,
+                criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+                atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+
+    # ICMS Mensal
+    if "icms_mensal" not in insp.get_table_names():
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS icms_mensal (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                escritorio_id INTEGER NOT NULL REFERENCES escritorios(id),
+                cliente_id INTEGER NOT NULL REFERENCES clientes(id),
+                competencia VARCHAR(7) NOT NULL,
+                credito FLOAT DEFAULT 0.0,
+                debito FLOAT DEFAULT 0.0,
+                saldo FLOAT DEFAULT 0.0,
+                origem VARCHAR(20) DEFAULT 'manual',
+                observacao VARCHAR(300),
+                criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+                atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+
     # Certidões
     if "certidoes" not in insp.get_table_names():
         conn.execute(text("""

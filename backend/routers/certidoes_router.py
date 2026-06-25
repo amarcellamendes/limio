@@ -99,7 +99,7 @@ SEFAZ_POR_UF: dict[str, tuple[str, str]] = {
 
 PORTAIS_FIXOS: dict[str, Optional[str]] = {
     "cnd_federal": "https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/emitir",
-    "cnd_falencia": "https://www.jucas.es.gov.br/",  # varies by state (Junta Comercial)
+    "cnd_falencia": None,  # varies by state (Tribunal de Justiça)
     "cnd_fgts": "https://consulta.caixa.gov.br/servicos/fgts-certidao/",
     "cndt_tst": "https://www.tst.jus.br/certidao",
     "cndt_trt": None,       # determined by UF via TRT_POR_UF
@@ -132,6 +132,10 @@ def _get_portal_url(tipo: str, uf: str = "") -> tuple[str, str]:
     found in the mapping), returns a generic fallback label with an empty URL.
     """
     uf = uf.upper().strip() if uf else ""
+
+    if tipo == "cnd_falencia":
+        tj_nome = f"Tribunal de Justiça — TJ{uf}" if uf else "Tribunal de Justiça (TJ — varia por estado)"
+        return (tj_nome, "")
 
     if tipo in ("cndt_trt",):
         if uf and uf in TRT_POR_UF:

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import os
 
 from .database import init_db
-from .routers import auth_router, clientes_router, notas_router, recebidos_router, calendario_router, contratos_router, apuracao_router, usuarios_router, integracoes_router, certidoes_router
+from .routers import auth_router, clientes_router, notas_router, recebidos_router, calendario_router, contratos_router, apuracao_router, usuarios_router, integracoes_router, certidoes_router, fornecedores_router
 
 
 @asynccontextmanager
@@ -40,6 +40,7 @@ app.include_router(apuracao_router.router)
 app.include_router(usuarios_router.router)
 app.include_router(integracoes_router.router)
 app.include_router(certidoes_router.router)
+app.include_router(fornecedores_router.router)
 
 # Serve o frontend a partir de /frontend
 _frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")

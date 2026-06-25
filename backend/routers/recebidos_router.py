@@ -16,8 +16,9 @@ import xml.etree.ElementTree as ET
 import httpx
 
 from ..database import get_db
-from ..models import DocumentoRecebido, Cliente, Escritorio, TipoNotaEnum
+from ..models import DocumentoRecebido, Cliente, Escritorio, TipoNotaEnum, Nota, StatusNotaEnum
 from ..auth import get_escritorio_atual, get_usuario_atual, Usuario
+from .fornecedores_router import upsert_fornecedor
 
 router = APIRouter(prefix="/api/recebidos", tags=["Documentos Recebidos"])
 
@@ -68,11 +69,45 @@ async def dashboard_recebidos(
     )
     pendentes_manifestacao = pendentes_res.scalar() or 0
 
+    # Notas EMITIDAS no mês
+    emitidas_res = await db.execute(
+        select(
+            Nota.tipo,
+            func.count(Nota.id).label("qtd"),
+            func.sum(Nota.valor_total).label("valor"),
+        )
+        .where(
+            and_(
+                Nota.escritorio_id == escritorio.id,
+                Nota.status == StatusNotaEnum.emitida,
+                Nota.criado_em >= f"{mes_atual}-01",
+            )
+        )
+        .group_by(Nota.tipo)
+    )
+    emitidas_por_tipo = {
+        row.tipo: {"qtd": row.qtd, "valor": round(row.valor or 0, 2)}
+        for row in emitidas_res
+    }
+
+    # Totais históricos
+    total_emitidas_res = await db.execute(
+        select(func.count(Nota.id)).where(
+            Nota.escritorio_id == escritorio.id,
+            Nota.status == StatusNotaEnum.emitida,
+        )
+    )
+    total_emitidas = total_emitidas_res.scalar() or 0
+
     return {
         "total_geral": total,
+        "total_emitidas": total_emitidas,
         "mes_atual": mes_atual,
-        "por_tipo": por_tipo,
+        "recebidas_por_tipo": por_tipo,
+        "emitidas_por_tipo": emitidas_por_tipo,
         "pendentes_manifestacao_nfe": pendentes_manifestacao,
+        # backwards compat
+        "por_tipo": por_tipo,
     }
 
 
@@ -186,6 +221,17 @@ async def upload_xml(
 
     novo = DocumentoRecebido(**doc)
     db.add(novo)
+    # Auto-cadastra/atualiza fornecedor
+    if doc.get("emitente_cnpj"):
+        await upsert_fornecedor(
+            db, escritorio.id,
+            cnpj=doc["emitente_cnpj"],
+            razao_social=doc.get("emitente_razao_social") or doc["emitente_cnpj"],
+            uf=doc.get("emitente_uf"),
+            municipio=doc.get("emitente_municipio"),
+            valor_nota=doc.get("valor_total") or 0.0,
+            data_nota=doc.get("data_emissao"),
+        )
     await db.commit()
     await db.refresh(novo)
     return {"id": novo.id, "mensagem": "Documento importado com sucesso", **doc}
@@ -282,11 +328,20 @@ async def sincronizar_cliente(
                     status_manifestacao="pendente",
                 )
                 db.add(novo)
+                await upsert_fornecedor(
+                    db, escritorio.id,
+                    cnpj=novo.emitente_cnpj,
+                    razao_social=novo.emitente_razao_social,
+                    uf=novo.emitente_uf,
+                    municipio=novo.emitente_municipio,
+                    valor_nota=novo.valor_total or 0.0,
+                    data_nota=novo.data_emissao,
+                )
                 importados += 1
             await db.commit()
             return {
                 "importados": importados,
-                "mensagem": f"{importados} documentos importados (modo mock)",
+                "mensagem": f"{importados} documentos importados (modo mock — dados de demonstração)",
                 "aviso": "Para sincronização real via SEFAZ DF-e, configure o certificado A1 do cliente.",
             }
         else:

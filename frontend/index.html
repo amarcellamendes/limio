@@ -228,6 +228,14 @@
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
         Clientes (CNPJs)
       </button>
+      <button @click="goto('fornecedores')" :class="page==='fornecedores' ? 'active' : ''" class="sl w-full">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z"/></svg>
+        Fornecedores
+      </button>
+      <button @click="goto('dashboard-notas')" :class="page==='dashboard-notas' ? 'active' : ''" class="sl w-full">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+        Dashboard Notas
+      </button>
 
       <div class="pt-2 pb-1 px-4">
         <p class="text-xs text-white/50 uppercase tracking-widest font-semibold">Conta</p>
@@ -1437,6 +1445,9 @@
                 <th class="pb-2 text-gray-500 font-semibold text-right">ISS</th>
                 <th class="pb-2 text-gray-500 font-semibold text-right">INSS</th>
                 <th class="pb-2 text-gray-500 font-semibold text-right">IR</th>
+                <th class="pb-2 text-orange-500 font-semibold text-right">ICMS Créd.</th>
+                <th class="pb-2 text-orange-500 font-semibold text-right">ICMS Déb.</th>
+                <th class="pb-2 text-orange-700 font-semibold text-right">ICMS Saldo</th>
               </tr>
             </thead>
             <tbody>
@@ -1463,18 +1474,29 @@
                   <td class="py-2 text-right text-blue-700" x-text="m.iss > 0 ? 'R$ ' + m.iss.toLocaleString('pt-BR',{minimumFractionDigits:2}) : '—'"></td>
                   <td class="py-2 text-right text-red-600" x-text="m.inss > 0 ? 'R$ ' + m.inss.toLocaleString('pt-BR',{minimumFractionDigits:2}) : '—'"></td>
                   <td class="py-2 text-right text-red-600" x-text="m.ir > 0 ? 'R$ ' + m.ir.toLocaleString('pt-BR',{minimumFractionDigits:2}) : '—'"></td>
+                  <!-- ICMS — editável inline via clique -->
+                  <td class="py-2 text-right text-green-700 text-xs cursor-pointer"
+                      @click="abrirIcmsModal(m.competencia, m.icms_credito||0, m.icms_debito||0, m.icms_observacao)"
+                      :title="'Clique para lançar ICMS de ' + m.competencia"
+                      x-text="(m.icms_credito||0) > 0 ? 'R$ ' + (m.icms_credito).toLocaleString('pt-BR',{minimumFractionDigits:2}) : '+'"></td>
+                  <td class="py-2 text-right text-orange-600 text-xs cursor-pointer"
+                      @click="abrirIcmsModal(m.competencia, m.icms_credito||0, m.icms_debito||0, m.icms_observacao)"
+                      x-text="(m.icms_debito||0) > 0 ? 'R$ ' + (m.icms_debito).toLocaleString('pt-BR',{minimumFractionDigits:2}) : '+'"></td>
+                  <td class="py-2 text-right font-bold text-xs"
+                      :class="(m.icms_saldo||0) > 0 ? 'text-red-700' : (m.icms_saldo||0) < 0 ? 'text-green-700' : 'text-gray-400'"
+                      x-text="(m.icms_saldo||0) !== 0 ? ((m.icms_saldo>0?'':'') + 'R$ ' + Math.abs(m.icms_saldo||0).toLocaleString('pt-BR',{minimumFractionDigits:2}) + (m.icms_saldo<0?' (credor)':' (recolher)')) : '—'"></td>
                 </tr>
               </template>
               <tr x-show="!apuracao.dados?.meses?.length">
-                <td colspan="10" class="py-6 text-center text-gray-400">Nenhuma nota emitida neste período</td>
+                <td colspan="13" class="py-6 text-center text-gray-400">Nenhuma nota emitida neste período</td>
               </tr>
             </tbody>
           </table>
         </div>
 
-        <!-- Tabela de referência dos Anexos -->
-        <div class="card mb-6">
-          <h3 class="font-bold text-gray-700 mb-3">Tabela Simples Nacional — Anexos I a V (2024)</h3>
+        <!-- Tabela de referência dos Anexos — só exibe para optantes Simples -->
+        <div class="card mb-6" x-show="apuracao.dados?.optante_simples">
+          <h3 class="font-bold text-gray-700 mb-3">Tabela Simples Nacional — Anexos I a V (2026)</h3>
           <div class="grid grid-cols-1 md:grid-cols-5 gap-3 text-xs">
             <template x-for="[k, tab] in Object.entries(apuracao.dados?.tabela_referencia ?? {})" :key="k">
               <div class="border rounded-lg overflow-hidden"
@@ -2010,6 +2032,209 @@
           </div>
         </form>
         <p class="text-xs text-gray-400 mt-3">Dica: salve a senha no cadastro do cliente para não precisar informar novamente.</p>
+      </div>
+    </div>
+
+    <!-- ── FORNECEDORES ── -->
+    <div x-show="page==='fornecedores'" class="p-6 max-w-5xl" x-init="if(page==='fornecedores') carregarFornecedores()">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-xl font-bold text-primary">Fornecedores</h2>
+          <p class="text-sm text-gray-500">Emitentes cadastrados automaticamente a partir das notas recebidas</p>
+        </div>
+        <div class="text-right text-sm text-gray-500">
+          <span x-text="fornecedores.lista.length"></span> fornecedor(es)
+        </div>
+      </div>
+
+      <!-- Busca -->
+      <div class="card mb-4">
+        <div class="flex gap-3">
+          <input x-model="fornecedores.busca" @input="filtrarFornecedores()"
+                 type="text" placeholder="Buscar por CNPJ ou razão social…" class="input flex-1">
+          <select x-model="fornecedores.filtroCategoria" @change="filtrarFornecedores()" class="input w-44">
+            <option value="">Todas categorias</option>
+            <template x-for="cat in fornecedores.categorias" :key="cat">
+              <option :value="cat" x-text="cat"></option>
+            </template>
+          </select>
+        </div>
+      </div>
+
+      <!-- Tabela -->
+      <div class="card overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-gray-100">
+              <th class="text-left pb-2 text-gray-500 font-semibold">Razão Social</th>
+              <th class="text-left pb-2 text-gray-500 font-semibold">CNPJ</th>
+              <th class="text-left pb-2 text-gray-500 font-semibold">UF</th>
+              <th class="text-left pb-2 text-gray-500 font-semibold">Categoria</th>
+              <th class="text-right pb-2 text-gray-500 font-semibold">Notas</th>
+              <th class="text-right pb-2 text-gray-500 font-semibold">Total Comprado</th>
+              <th class="text-right pb-2 text-gray-500 font-semibold">Última Nota</th>
+              <th class="pb-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-if="fornecedores.filtrada.length === 0">
+              <tr><td colspan="8" class="py-8 text-center text-gray-400 text-sm">
+                Nenhum fornecedor encontrado. Importe notas recebidas para cadastrar automaticamente.
+              </td></tr>
+            </template>
+            <template x-for="f in fornecedores.filtrada" :key="f.id">
+              <tr class="border-b border-gray-50 hover:bg-gray-50">
+                <td class="py-2 pr-3">
+                  <div class="font-medium text-gray-800" x-text="f.razao_social"></div>
+                  <div x-show="f.nome_fantasia" class="text-xs text-gray-400" x-text="f.nome_fantasia"></div>
+                </td>
+                <td class="py-2 pr-3 font-mono text-xs text-gray-600" x-text="f.cnpj"></td>
+                <td class="py-2 pr-3 text-gray-600" x-text="f.uf || '—'"></td>
+                <td class="py-2 pr-3">
+                  <span x-show="f.categoria" class="px-2 py-0.5 bg-blue-50 text-blue-700 text-xs rounded-full" x-text="f.categoria"></span>
+                  <span x-show="!f.categoria" class="text-gray-300 text-xs">—</span>
+                </td>
+                <td class="py-2 pr-3 text-right" x-text="f.total_notas || 0"></td>
+                <td class="py-2 pr-3 text-right font-medium"
+                    x-text="'R$ ' + (f.valor_total_notas||0).toLocaleString('pt-BR',{minimumFractionDigits:2})"></td>
+                <td class="py-2 pr-3 text-right text-xs text-gray-500"
+                    x-text="f.ultima_nota_em ? f.ultima_nota_em.slice(0,10) : '—'"></td>
+                <td class="py-2">
+                  <button @click="editarFornecedor(f)"
+                          class="text-xs text-accent hover:underline">Editar</button>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Modal edição de fornecedor -->
+      <div x-show="fornecedores.modalShow" x-cloak
+           class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6" @click.stop>
+          <h3 class="text-lg font-bold text-primary mb-4">Editar Fornecedor</h3>
+          <div x-show="fornecedores.modalErro" class="mb-3 p-3 bg-red-50 text-red-700 rounded-lg text-sm" x-text="fornecedores.modalErro"></div>
+          <div class="space-y-3">
+            <div>
+              <label class="label">Razão Social</label>
+              <input type="text" :value="fornecedores.editando?.razao_social" disabled class="input bg-gray-50">
+            </div>
+            <div>
+              <label class="label">Nome Fantasia</label>
+              <input type="text" x-model="fornecedores.form.nome_fantasia" class="input">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="label">E-mail</label>
+                <input type="email" x-model="fornecedores.form.email" class="input">
+              </div>
+              <div>
+                <label class="label">Telefone</label>
+                <input type="text" x-model="fornecedores.form.telefone" class="input">
+              </div>
+            </div>
+            <div>
+              <label class="label">Categoria</label>
+              <input type="text" x-model="fornecedores.form.categoria"
+                     placeholder="Ex: Material de escritório, TI, Serviços gerais…" class="input">
+            </div>
+          </div>
+          <div class="flex justify-end gap-3 mt-6">
+            <button @click="fornecedores.modalShow = false" class="btn-secondary">Cancelar</button>
+            <button @click="salvarFornecedor()" class="btn-primary">Salvar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── DASHBOARD NOTAS ── -->
+    <div x-show="page==='dashboard-notas'" class="p-6 max-w-5xl" x-init="if(page==='dashboard-notas') carregarDashboardNotas()">
+      <div class="mb-6">
+        <h2 class="text-xl font-bold text-primary">Dashboard de Notas</h2>
+        <p class="text-sm text-gray-500">Visão consolidada de notas emitidas e recebidas por tipo</p>
+      </div>
+
+      <div x-show="dashNotas.carregando" class="text-center py-12 text-gray-400">Carregando…</div>
+
+      <div x-show="!dashNotas.carregando">
+        <!-- Cards resumo -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <div class="card text-center">
+            <div class="text-2xl font-bold text-primary" x-text="dashNotas.dados?.total_emitidas || 0"></div>
+            <div class="text-xs text-gray-500 mt-1">Total Notas Emitidas</div>
+          </div>
+          <div class="card text-center">
+            <div class="text-2xl font-bold text-teal-600" x-text="dashNotas.dados?.total_geral || 0"></div>
+            <div class="text-xs text-gray-500 mt-1">Total Notas Recebidas</div>
+          </div>
+          <div class="card text-center">
+            <div class="text-2xl font-bold text-orange-500" x-text="dashNotas.dados?.pendentes_manifestacao_nfe || 0"></div>
+            <div class="text-xs text-gray-500 mt-1">Pendentes Manifestação</div>
+          </div>
+          <div class="card text-center">
+            <div class="text-2xl font-bold text-blue-600"
+                 x-text="'R$ ' + (Object.values(dashNotas.dados?.emitidas_por_tipo||{}).reduce((s,t)=>s+(t.valor||0),0)).toLocaleString('pt-BR',{minimumFractionDigits:2})"></div>
+            <div class="text-xs text-gray-500 mt-1">Emitidas este mês</div>
+          </div>
+        </div>
+
+        <!-- Emitidas por tipo -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <div class="card">
+            <h3 class="font-bold text-gray-700 mb-4">Notas Emitidas — Mês Atual</h3>
+            <div class="space-y-3">
+              <template x-for="[tipo, label, cor] in [['nfse','NFS-e — Serviços','text-blue-700 bg-blue-50'],['nfe','NF-e — Produtos','text-purple-700 bg-purple-50'],['nfce','NFC-e — Cupom Fiscal','text-green-700 bg-green-50']]">
+                <div class="flex items-center justify-between p-3 rounded-xl"
+                     :class="cor.split(' ')[1]">
+                  <div class="flex items-center gap-2">
+                    <span class="font-bold text-sm px-2 py-0.5 rounded" :class="cor.split(' ')[0] + ' ' + cor.split(' ')[1]" x-text="tipo.toUpperCase()"></span>
+                    <span class="text-sm text-gray-600" x-text="label.split('—')[1]"></span>
+                  </div>
+                  <div class="text-right">
+                    <div class="font-bold" :class="cor.split(' ')[0]"
+                         x-text="(dashNotas.dados?.emitidas_por_tipo?.[tipo]?.qtd || 0) + ' notas'"></div>
+                    <div class="text-xs text-gray-500"
+                         x-text="'R$ ' + ((dashNotas.dados?.emitidas_por_tipo?.[tipo]?.valor)||0).toLocaleString('pt-BR',{minimumFractionDigits:2})"></div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 class="font-bold text-gray-700 mb-4">Notas Recebidas — Mês Atual</h3>
+            <div class="space-y-3">
+              <template x-for="[tipo, label, cor] in [['nfse','NFS-e — Serviços','text-blue-700 bg-blue-50'],['nfe','NF-e — Produtos','text-purple-700 bg-purple-50'],['nfce','NFC-e — Cupom Fiscal','text-green-700 bg-green-50']]">
+                <div class="flex items-center justify-between p-3 rounded-xl"
+                     :class="cor.split(' ')[1]">
+                  <div class="flex items-center gap-2">
+                    <span class="font-bold text-sm px-2 py-0.5 rounded" :class="cor.split(' ')[0] + ' ' + cor.split(' ')[1]" x-text="tipo.toUpperCase()"></span>
+                    <span class="text-sm text-gray-600" x-text="label.split('—')[1]"></span>
+                  </div>
+                  <div class="text-right">
+                    <div class="font-bold" :class="cor.split(' ')[0]"
+                         x-text="(dashNotas.dados?.recebidas_por_tipo?.[tipo]?.qtd || 0) + ' notas'"></div>
+                    <div class="text-xs text-gray-500"
+                         x-text="'R$ ' + ((dashNotas.dados?.recebidas_por_tipo?.[tipo]?.valor)||0).toLocaleString('pt-BR',{minimumFractionDigits:2})"></div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- Aviso dados demo -->
+        <div x-show="dashNotas.dados?.total_geral > 0 && dashNotas.aviso_mock"
+             class="card border-amber-200 bg-amber-50 text-amber-800 text-sm">
+          <strong>Nota:</strong> As notas recebidas exibidas são dados de demonstração gerados automaticamente.
+          Para sincronizar notas reais via SEFAZ, configure o certificado A1 de cada cliente.
+        </div>
+
+        <div x-show="dashNotas.dados?.total_geral === 0 && !dashNotas.carregando"
+             class="card text-center py-8 text-gray-400 text-sm">
+          Nenhuma nota recebida ainda. Clique em "Notas Recebidas" → "Sincronizar" para importar.
+        </div>
       </div>
     </div>
 
@@ -3268,7 +3493,7 @@ function app() {
       },
       portais: {
         cnd_federal: { nome: 'Receita Federal', url: 'https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/emitir' },
-        cnd_falencia: { nome: 'Junta Comercial (varia por estado)', url: '' },
+        cnd_falencia: { nome: 'Tribunal de Justiça (TJ — varia por estado)', url: '' },
         cnd_fgts: { nome: 'Caixa Econômica Federal', url: 'https://consulta.caixa.gov.br/servicos/fgts-certidao/' },
         cndt_tst: { nome: 'TST Nacional', url: 'https://www.tst.jus.br/certidao' },
         cndt_trt: { nome: '', url: '' },
@@ -3343,6 +3568,17 @@ function app() {
 
     // Relatório mensal
     modalRelatorio: { show: false, cliente_id: '', competencia: '' },
+
+    // Fornecedores
+    fornecedores: {
+      lista: [], filtrada: [], categorias: [],
+      busca: '', filtroCategoria: '',
+      modalShow: false, modalErro: '', editando: null,
+      form: { nome_fantasia: '', email: '', telefone: '', categoria: '' },
+    },
+
+    // Dashboard Notas
+    dashNotas: { carregando: false, dados: null, aviso_mock: false },
 
     // Documentos Recebidos
     docsRecebidos: [],
@@ -3449,6 +3685,8 @@ function app() {
       if (p === 'configuracoes') this.carregarConfiguracoes()
       if (p === 'equipe') this.carregarEquipe()
       if (p === 'certidoes') this.carregarCertidoes()
+      if (p === 'fornecedores') this.carregarFornecedores()
+      if (p === 'dashboard-notas') this.carregarDashboardNotas()
     },
 
     async carregarConfiguracoes() {
@@ -3552,6 +3790,7 @@ function app() {
         const detail = d.detail
         throw new Error(Array.isArray(detail) ? detail.map(e => e.msg || JSON.stringify(e)).join(' | ') : (detail || `Erro ${r.status}`))
       }
+      if (r.status === 204) return null
       return r.json()
     },
 
@@ -4059,6 +4298,58 @@ function app() {
         const r = await this.api('/api/recebidos/dashboard')
         this.dashRecebidos = r
       } catch(e) {}
+    },
+
+    // ─── FORNECEDORES ───────────────────────────────────
+    async carregarFornecedores() {
+      try {
+        const lista = await this.api('/api/fornecedores')
+        this.fornecedores.lista = lista
+        this.fornecedores.filtrada = lista
+        const cats = [...new Set(lista.map(f => f.categoria).filter(Boolean))].sort()
+        this.fornecedores.categorias = cats
+      } catch(e) { this.showToast('Erro ao carregar fornecedores: ' + e.message, 'error') }
+    },
+
+    filtrarFornecedores() {
+      let f = this.fornecedores.lista
+      if (this.fornecedores.busca) {
+        const q = this.fornecedores.busca.toLowerCase()
+        f = f.filter(x => x.razao_social.toLowerCase().includes(q) || x.cnpj.includes(q))
+      }
+      if (this.fornecedores.filtroCategoria) {
+        f = f.filter(x => x.categoria === this.fornecedores.filtroCategoria)
+      }
+      this.fornecedores.filtrada = f
+    },
+
+    editarFornecedor(f) {
+      this.fornecedores.editando = f
+      this.fornecedores.form = { nome_fantasia: f.nome_fantasia || '', email: f.email || '', telefone: f.telefone || '', categoria: f.categoria || '' }
+      this.fornecedores.modalErro = ''
+      this.fornecedores.modalShow = true
+    },
+
+    async salvarFornecedor() {
+      try {
+        await this.api(`/api/fornecedores/${this.fornecedores.editando.id}`, 'PUT', this.fornecedores.form)
+        this.fornecedores.modalShow = false
+        this.showToast('Fornecedor atualizado.')
+        await this.carregarFornecedores()
+      } catch(e) { this.fornecedores.modalErro = e.message || 'Erro ao salvar.' }
+    },
+
+    // ─── DASHBOARD NOTAS ────────────────────────────────
+    async carregarDashboardNotas() {
+      this.dashNotas.carregando = true
+      try {
+        const r = await this.api('/api/recebidos/dashboard')
+        this.dashNotas.dados = r
+        // Detecta se os dados são mock (todos fornecedores "Demo")
+        const recebidas = await this.api('/api/recebidos?limit=3')
+        this.dashNotas.aviso_mock = recebidas.some(d => d.emitente_razao_social?.includes('Demo'))
+      } catch(e) {}
+      this.dashNotas.carregando = false
     },
 
     async carregarRecebidos() {

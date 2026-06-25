@@ -104,8 +104,8 @@ async def buscar_faturamento_lp(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Busca faturamento de empresa LP/LR via e-CAC (Receita Federal).
-    Usa o certificado A1 para acessar 'Consulta de Receita Bruta' ou DCTF.
+    Busca faturamento de empresa LP/LR via EFD Contribuições (e-CAC / SPED).
+    Navega para e-CAC → SPED → EFD-Contribuições e extrai a receita bruta PIS/COFINS.
     """
     cliente = await _get_cliente(cliente_id, escritorio.id, db)
     cert_pem, key_pem = await _cert_ou_erro(cliente, senha)
@@ -114,14 +114,14 @@ async def buscar_faturamento_lp(
         raise HTTPException(503, "Módulo de automação não disponível.")
 
     try:
-        # Registra cert para ambos os domínios (e-CAC + DCTFWeb)
         resultado = await _run_playwright_multi(
             cert_pem, key_pem,
-            ["https://cav.receita.fazenda.gov.br", "https://dctfweb.receita.fazenda.gov.br"],
-            lambda p, c: _tarefa_ecac_faturamento(p, c, cliente.cnpj, ano),
+            ["https://cav.receita.fazenda.gov.br", "https://sped.rfb.gov.br",
+             "https://www.receita.fazenda.gov.br"],
+            lambda p, c: _tarefa_efd_contribuicoes(p, c, cliente.cnpj, ano),
         )
         for rec in resultado.get("receitas", []):
-            await _upsert_receita(db, escritorio.id, cliente.id, rec["competencia"], rec["valor_receita"], "ecac")
+            await _upsert_receita(db, escritorio.id, cliente.id, rec["competencia"], rec["valor_receita"], "efd_contrib")
         await db.commit()
         return {"status": "ok", **resultado}
     except Exception as e:
@@ -398,6 +398,31 @@ async def _run_playwright_multi(cert_pem: bytes, key_pem: bytes, origins: list[s
                 pass
 
 
+async def _run_playwright_no_cert(tarefa_fn) -> dict:
+    """Playwright sem certificado cliente — para portais públicos (CND Federal, TST, FGTS)."""
+    from playwright.async_api import async_playwright
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+                  "--disable-blink-features=AutomationControlled"],
+        )
+        context = await browser.new_context(
+            ignore_https_errors=True,
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
+        )
+        page = await context.new_page()
+        try:
+            return await tarefa_fn(page)
+        finally:
+            await context.close()
+            await browser.close()
+
+
 async def _run_playwright(cert_pem: bytes, key_pem: bytes, origin: str, tarefa_fn) -> dict:
     from playwright.async_api import async_playwright
 
@@ -597,16 +622,60 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int) -> dict:
         html = await page.content()
         receitas = _parse_pgdas_lxml(html, ano)
 
-    # 6. Tenta URL alternativa de extrato/consulta
+    # 6. Tenta URL alternativa de extrato/consulta — aguarda JS renderizar
+    if not receitas:
+        for extrato_url in [
+            f"https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATBHE/pgdas.app/extrato.app/?ano={ano}",
+            f"https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATBHE/pgdas.app/historico.app/?ano={ano}",
+        ]:
+            try:
+                await page.goto(extrato_url, wait_until="networkidle", timeout=45000)
+                # Aguarda elemento de tabela ou competência aparecer
+                try:
+                    await page.wait_for_selector("table, .competencia, td, [class*='declara']",
+                                                  timeout=8000)
+                except Exception:
+                    pass
+                await page.wait_for_timeout(2000)
+                html = await page.content()
+                receitas = _parse_pgdas_lxml(html, ano)
+                if receitas:
+                    break
+            except Exception:
+                pass
+
+    # 7. Última tentativa: itera clicando em links de competência na página atual
     if not receitas:
         try:
-            await page.goto(
-                f"https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATBHE/pgdas.app/extrato.app/?ano={ano}",
-                wait_until="domcontentloaded", timeout=30000
-            )
-            await page.wait_for_timeout(3000)
             html = await page.content()
-            receitas = _parse_pgdas_lxml(html, ano)
+            # Procura links com padrão MM/AAAA ou MM-AAAA no href ou texto
+            from lxml import html as lx
+            tree = lx.fromstring(html)
+            comp_links = []
+            for a in tree.iter("a"):
+                txt = (a.text_content() or "").strip()
+                href = a.get("href", "")
+                if re.search(r'\d{2}/\d{4}|\d{2}-\d{4}', txt) or "competencia" in href.lower():
+                    comp_links.append(txt)
+            if comp_links:
+                # Encontrou links — tenta clicar no primeiro mês disponível
+                for mes in range(1, 13):
+                    comp_slash = f"{mes:02d}/{ano}"
+                    try:
+                        el = page.locator(f"a:has-text('{comp_slash}')").first
+                        if await el.count() > 0:
+                            await el.click()
+                            await page.wait_for_load_state("networkidle", timeout=20000)
+                            await page.wait_for_timeout(1500)
+                            html = await page.content()
+                            month_recs = _parse_pgdas_lxml(html, ano, mes_fixo=mes)
+                            for r2 in month_recs:
+                                if not any(x["competencia"] == r2["competencia"] for x in receitas):
+                                    receitas.append(r2)
+                            await page.go_back()
+                            await page.wait_for_timeout(1000)
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -755,6 +824,136 @@ async def _tentar_api_esocial(page, context, cnpj: str, ano: int) -> list:
 
 
 # ─── Tarefa e-CAC faturamento LP/LR ─────────────────────────────────────────
+
+async def _tarefa_efd_contribuicoes(page, context, cnpj: str, ano: int) -> dict:
+    """
+    Extrai receita bruta via EFD Contribuições (SPED) pelo e-CAC.
+
+    Fluxo:
+      e-CAC → Declarações e Demonstrativos → EFD-Contribuições
+      → seleciona período → extrai base PIS/COFINS (= receita bruta)
+    """
+    receitas: list[dict] = []
+
+    # ── 1. Autentica no e-CAC ────────────────────────────────────────────────
+    await page.goto("https://cav.receita.fazenda.gov.br/autenticacao/login",
+                    wait_until="networkidle", timeout=60000)
+    await page.wait_for_timeout(3000)
+
+    for sel in ["a:has-text('Certificado Digital')", "button:has-text('Certificado Digital')",
+                "input[value*='ertificado']", "#btnCertificado"]:
+        try:
+            el = page.locator(sel).first
+            if await el.count() > 0:
+                await el.click()
+                await page.wait_for_load_state("networkidle", timeout=20000)
+                await page.wait_for_timeout(2000)
+                break
+        except Exception:
+            pass
+
+    # ── 2. Tenta acessar EFD Contribuições via SPED portal ──────────────────
+    efd_urls = [
+        "https://sped.rfb.gov.br/contribuicoes/",
+        "https://sped.rfb.gov.br/",
+        "https://cav.receita.fazenda.gov.br/eCAC/ConsultarDeclaracoes?tipo=EFD-Contribuicoes",
+    ]
+    for url in efd_urls:
+        try:
+            await page.goto(url, wait_until="networkidle", timeout=30000)
+            await page.wait_for_timeout(2000)
+            html = await page.content()
+            recs = _parse_efd_contribuicoes_html(html, ano)
+            if recs:
+                receitas.extend(recs)
+                break
+        except Exception:
+            pass
+
+    # ── 3. Navega pelos menus do e-CAC buscando EFD ──────────────────────────
+    if not receitas:
+        await page.goto("https://cav.receita.fazenda.gov.br/eCAC/", wait_until="networkidle",
+                        timeout=30000)
+        await page.wait_for_timeout(2000)
+        for nav_sel in [
+            "a:has-text('Declarações')", "a:has-text('SPED')", "a:has-text('EFD')",
+            "a:has-text('Contribuições')", "a:has-text('Demonstrativos')",
+        ]:
+            try:
+                el = page.locator(nav_sel).first
+                if await el.count() > 0:
+                    await el.click()
+                    await page.wait_for_load_state("networkidle", timeout=15000)
+                    await page.wait_for_timeout(1500)
+                    html = await page.content()
+                    recs = _parse_efd_contribuicoes_html(html, ano)
+                    if recs:
+                        receitas.extend(recs)
+                        break
+            except Exception:
+                pass
+
+    aviso = (
+        f"EFD-Contribuições: {len(receitas)} competência(s) extraída(s) de {ano}."
+        if receitas
+        else (
+            f"Acesso ao portal EFD-Contribuições estabelecido (URL: {page.url}). "
+            f"Nenhum dado de {ano} encontrado. Verifique se a empresa transmitiu "
+            "a EFD-Contribuições para o período via SPED."
+        )
+    )
+    return {"receitas": receitas, "aviso": aviso}
+
+
+def _parse_efd_contribuicoes_html(html: str, ano: int) -> list:
+    """Extrai receita bruta do HTML da página EFD-Contribuições do e-CAC."""
+    receitas = []
+    try:
+        from lxml import html as lx
+        tree = lx.fromstring(html)
+        for table in tree.iter("table"):
+            headers = [" ".join(th.text_content().split()).upper() for th in table.iter("th")]
+            receita_idx = next((i for i, h in enumerate(headers)
+                                if "RECEITA BRUTA" in h or "BASE" in h or "PIS" in h), None)
+            comp_idx = next((i for i, h in enumerate(headers)
+                             if "COMPETÊNCIA" in h or "PERÍODO" in h or "MÊS" in h), None)
+            if receita_idx is None:
+                continue
+            for tr in table.iter("tr"):
+                cells = [" ".join(td.text_content().split()) for td in tr.iter("td")]
+                if len(cells) <= receita_idx:
+                    continue
+                comp_text = cells[comp_idx] if comp_idx is not None and comp_idx < len(cells) else ""
+                m = re.search(r'(\d{2})/(\d{4})', comp_text)
+                if not m:
+                    continue
+                mes, a = int(m.group(1)), int(m.group(2))
+                if a != ano:
+                    continue
+                val_text = re.sub(r'[^\d,.]', '', cells[receita_idx])
+                try:
+                    val = float(val_text.replace('.', '').replace(',', '.'))
+                    if val > 0:
+                        receitas.append({"competencia": f"{ano}-{mes:02d}", "valor_receita": val})
+                except ValueError:
+                    pass
+    except Exception:
+        pass
+
+    # Fallback regex
+    if not receitas:
+        for m in re.finditer(r'(\d{2})/(\d{4})[^<]*?R\$\s*([\d.,]+)', html):
+            mes, a = int(m.group(1)), int(m.group(2))
+            if a != ano:
+                continue
+            try:
+                val = float(m.group(3).replace('.', '').replace(',', '.'))
+                if val > 0:
+                    receitas.append({"competencia": f"{ano}-{mes:02d}", "valor_receita": val})
+            except ValueError:
+                pass
+    return receitas
+
 
 async def _tarefa_ecac_faturamento(page, context, cnpj: str, ano: int) -> dict:
     """
@@ -930,75 +1129,101 @@ async def _tarefa_ecac_faturamento(page, context, cnpj: str, ano: int) -> dict:
 # ─── Consulta automática de certidões ────────────────────────────────────────
 
 async def _consultar_cnd_federal(cnpj: str) -> dict:
-    """CND Federal — Receita Federal + PGFN. Consulta por CNPJ via httpx."""
-    import httpx
+    """CND Federal — Receita Federal + PGFN. Usa Playwright (portal JS-rendered)."""
+    if not await _playwright_ok():
+        return {"status": "em_analise", "observacao": "Playwright não disponível. Acesse: https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/emitir"}
 
-    url = "https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/emitir"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0",
-        "Referer": url,
-        "Content-Type": "application/x-www-form-urlencoded",
-    }
-    async with httpx.AsyncClient(verify=False, timeout=30, follow_redirects=True) as c:
-        # GET primeiro para obter cookies/token
-        r0 = await c.get(url, headers=headers)
-        # POST com o CNPJ
-        r1 = await c.post(url, data={"cnpj": cnpj}, headers=headers)
-        html = r1.text
+    cnpj_digits = re.sub(r'\D', '', cnpj)
 
-    return _parse_certidao_html(html, "cnd_federal")
+    async def _tarefa(page):
+        url = "https://solucoes.receita.fazenda.gov.br/Servicos/CertidaoInternet/PJ/emitir"
+        await page.goto(url, wait_until="networkidle", timeout=40_000)
+        # preenche CNPJ — a RF usa campo 'NrCnpj' ou 'cnpj'
+        for sel in ['input[name="NrCnpj"]', 'input[name="cnpj"]', 'input[id*="cnpj" i]']:
+            try:
+                await page.fill(sel, cnpj_digits, timeout=3_000)
+                break
+            except Exception:
+                pass
+        # clica no botão de emissão
+        for sel in ['input[type="image"]', 'button[type="submit"]', 'input[type="submit"]', 'a:has-text("Emitir")']:
+            try:
+                await page.click(sel, timeout=3_000)
+                break
+            except Exception:
+                pass
+        await page.wait_for_load_state("networkidle", timeout=40_000)
+        return _parse_certidao_html(await page.content(), "cnd_federal")
+
+    try:
+        return await _run_playwright_no_cert(_tarefa)
+    except Exception as e:
+        return {"status": "em_analise", "observacao": f"Erro na consulta automática: {e}. Acesse: https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/emitir"}
 
 
 async def _consultar_cnd_fgts(cnpj: str) -> dict:
-    """CRF FGTS — Caixa Econômica Federal."""
-    import httpx
+    """CRF FGTS — Caixa Econômica Federal. Usa Playwright (portal JSF)."""
+    if not await _playwright_ok():
+        return {"status": "em_analise", "observacao": "Playwright não disponível. Acesse: https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf"}
 
-    cnpj_fmt = f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:]}"
-    url = f"https://consulta.caixa.gov.br/servicos/fgts-certidao/{cnpj}"
-    headers = {"User-Agent": "Mozilla/5.0 Chrome/125.0.0.0"}
-    async with httpx.AsyncClient(verify=False, timeout=30, follow_redirects=True) as c:
-        r = await c.get(url, headers=headers)
-        html = r.text
-        # Tenta também POST
-        if "REGULAR" not in html.upper() and "IRREGULAR" not in html.upper():
-            r2 = await c.post(
-                "https://consulta.caixa.gov.br/servicos/fgts-certidao/",
-                data={"cnpj": cnpj, "empresa": cnpj_fmt},
-                headers=headers,
-            )
-            html = r2.text
+    cnpj_digits = re.sub(r'\D', '', cnpj)
 
-    return _parse_certidao_html(html, "cnd_fgts")
+    async def _tarefa(page):
+        url = "https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf"
+        await page.goto(url, wait_until="networkidle", timeout=40_000)
+        for sel in ['input[id*="cnpj" i]', 'input[name*="cnpj" i]', 'input[type="text"]']:
+            try:
+                await page.fill(sel, cnpj_digits, timeout=3_000)
+                break
+            except Exception:
+                pass
+        for sel in ['button[type="submit"]', 'input[type="submit"]', 'input[type="image"]']:
+            try:
+                await page.click(sel, timeout=3_000)
+                break
+            except Exception:
+                pass
+        await page.wait_for_load_state("networkidle", timeout=40_000)
+        return _parse_certidao_html(await page.content(), "cnd_fgts")
+
+    try:
+        return await _run_playwright_no_cert(_tarefa)
+    except Exception as e:
+        return {"status": "em_analise", "observacao": f"Erro na consulta: {e}. Acesse: https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf"}
 
 
 async def _consultar_cndt_tst(cnpj: str) -> dict:
-    """CNDT — TST Nacional. Formulário público por CNPJ."""
-    import httpx
+    """CNDT — TST Nacional. Usa Playwright (portal JS-rendered)."""
+    if not await _playwright_ok():
+        return {"status": "em_analise", "observacao": "Playwright não disponível. Acesse: https://www.tst.jus.br/certidao"}
 
-    url = "https://www.tst.jus.br/certidao"
-    headers = {
-        "User-Agent": "Mozilla/5.0 Chrome/125.0.0.0",
-        "Content-Type": "application/x-www-form-urlencoded",
-    }
-    async with httpx.AsyncClient(verify=False, timeout=30, follow_redirects=True) as c:
-        r0 = await c.get(url, headers=headers)
-        html0 = r0.text
-        # Extrai action/token se houver
-        action_match = re.search(r'action=["\']([^"\']+)["\']', html0)
-        action = action_match.group(1) if action_match else url
-        if not action.startswith("http"):
-            action = "https://www.tst.jus.br" + action
-        # POST
-        r1 = await c.post(action, data={"cpf_cnpj": cnpj, "nrCpfCnpj": cnpj}, headers=headers)
-        html = r1.text
+    cnpj_digits = re.sub(r'\D', '', cnpj)
 
-    return _parse_certidao_html(html, "cndt_tst")
+    async def _tarefa(page):
+        await page.goto("https://www.tst.jus.br/certidao", wait_until="networkidle", timeout=40_000)
+        for sel in ['input[name="cpf_cnpj"]', 'input[name="nrCpfCnpj"]', 'input[id*="cnpj" i]', 'input[type="text"]']:
+            try:
+                await page.fill(sel, cnpj_digits, timeout=3_000)
+                break
+            except Exception:
+                pass
+        for sel in ['button[type="submit"]', 'input[type="submit"]', 'input[type="image"]', 'a:has-text("Consultar")', 'button:has-text("Emitir")']:
+            try:
+                await page.click(sel, timeout=3_000)
+                break
+            except Exception:
+                pass
+        await page.wait_for_load_state("networkidle", timeout=40_000)
+        return _parse_certidao_html(await page.content(), "cndt_tst")
+
+    try:
+        return await _run_playwright_no_cert(_tarefa)
+    except Exception as e:
+        return {"status": "em_analise", "observacao": f"Erro na consulta: {e}. Acesse: https://www.tst.jus.br/certidao"}
 
 
 async def _consultar_cndt_trt(cnpj: str, uf: str) -> dict:
-    """CNDT TRT Regional — URL varia por TRT/UF."""
-    import httpx
-
+    """CNDT TRT Regional — URL varia por TRT/UF. Usa Playwright."""
     _TRT_URLS = {
         "RJ": "https://certidao.trt1.jus.br/certidao/",
         "SP": "https://www.trt2.jus.br/certidao/",
@@ -1030,80 +1255,132 @@ async def _consultar_cndt_trt(cnpj: str, uf: str) -> dict:
     }
     trt_url = _TRT_URLS.get(uf.upper(), "https://www.tst.jus.br/certidao")
 
-    headers = {"User-Agent": "Mozilla/5.0 Chrome/125.0.0.0"}
-    async with httpx.AsyncClient(verify=False, timeout=30, follow_redirects=True) as c:
-        try:
-            r0 = await c.get(trt_url, headers=headers)
-            action = re.search(r'action=["\']([^"\']+)["\']', r0.text)
-            act = action.group(1) if action else trt_url
-            if not act.startswith("http"):
-                act = trt_url.rstrip("/") + "/" + act.lstrip("/")
-            r1 = await c.post(act, data={"nrCpfCnpj": cnpj, "cpf_cnpj": cnpj, "cnpj": cnpj}, headers=headers)
-            html = r1.text
-        except Exception:
-            html = ""
+    if not await _playwright_ok():
+        return {"status": "em_analise", "observacao": f"Playwright não disponível. Acesse: {trt_url}"}
 
-    result = _parse_certidao_html(html, "cndt_trt")
-    result["observacao"] = f"TRT consultado: {uf} → {trt_url}"
-    return result
+    cnpj_digits = re.sub(r'\D', '', cnpj)
+
+    async def _tarefa(page):
+        await page.goto(trt_url, wait_until="networkidle", timeout=40_000)
+        for sel in ['input[name="nrCpfCnpj"]', 'input[name="cpf_cnpj"]', 'input[name="cnpj"]', 'input[id*="cnpj" i]', 'input[type="text"]']:
+            try:
+                await page.fill(sel, cnpj_digits, timeout=3_000)
+                break
+            except Exception:
+                pass
+        for sel in ['button[type="submit"]', 'input[type="submit"]', 'input[type="image"]', 'a:has-text("Consultar")']:
+            try:
+                await page.click(sel, timeout=3_000)
+                break
+            except Exception:
+                pass
+        await page.wait_for_load_state("networkidle", timeout=40_000)
+        result = _parse_certidao_html(await page.content(), "cndt_trt")
+        result["observacao"] = f"TRT consultado: {uf} → {trt_url}"
+        return result
+
+    try:
+        return await _run_playwright_no_cert(_tarefa)
+    except Exception as e:
+        return {"status": "em_analise", "observacao": f"Erro na consulta TRT{uf}: {e}. Acesse: {trt_url}"}
 
 
 async def _consultar_cnd_estadual(cnpj: str, uf: str, tipo: str) -> dict:
-    """CND Estadual — varia por UF/SEFAZ. Estratégia: GET no portal + extração."""
-    import httpx
-
+    """CND Estadual — varia por UF/SEFAZ. Usa Playwright para portais JS-rendered."""
     _SEFAZ_CNDS = {
         "AM": "https://www.sefaz.am.gov.br/portal/certidao-negativa",
         "SP": "https://www10.fazenda.sp.gov.br/CertidaoNegativaDeb/Pages/EmissaoCertidao.aspx",
         "RJ": "https://www4.fazenda.rj.gov.br/consultaDivida/pages/certidaoNegativa.jsf",
         "MG": "https://www.fazenda.mg.gov.br/empresas/impostos_estaduais/certidao/",
+        "RS": "https://www.sefaz.rs.gov.br/SAT/CertidaoPJ.aspx",
+        "PE": "https://www.sefaz.pe.gov.br/sefa/servlet/consulta",
+        "CE": "https://cagec.sefaz.ce.gov.br/",
+        "BA": "https://www.sefaz.ba.gov.br/certidao/",
     }
     url = _SEFAZ_CNDS.get(uf.upper(), "")
     if not url:
+        sefaz = f"www.sefaz.{uf.lower()}.gov.br"
         return {
             "status": "em_analise",
-            "observacao": f"Portal SEFAZ-{uf} ainda não integrado. Consulte manualmente em www.sefaz.{uf.lower()}.gov.br",
+            "observacao": f"Portal SEFAZ-{uf} ainda não integrado. Consulte manualmente em {sefaz}",
         }
 
-    headers = {"User-Agent": "Mozilla/5.0 Chrome/125.0.0.0"}
-    async with httpx.AsyncClient(verify=False, timeout=30, follow_redirects=True) as c:
-        try:
-            r0 = await c.get(url, headers=headers)
-            html = r0.text
-            r1 = await c.post(url, data={"cnpj": cnpj, "nrCnpj": cnpj}, headers=headers)
-            html = r1.text
-        except Exception:
-            html = ""
+    if not await _playwright_ok():
+        return {"status": "em_analise", "observacao": f"Playwright não disponível. Acesse: {url}"}
 
-    return _parse_certidao_html(html, tipo)
+    cnpj_digits = re.sub(r'\D', '', cnpj)
+
+    async def _tarefa(page):
+        await page.goto(url, wait_until="networkidle", timeout=40_000)
+        for sel in ['input[name*="cnpj" i]', 'input[id*="cnpj" i]', 'input[type="text"]']:
+            try:
+                await page.fill(sel, cnpj_digits, timeout=3_000)
+                break
+            except Exception:
+                pass
+        for sel in ['button[type="submit"]', 'input[type="submit"]', 'input[type="image"]']:
+            try:
+                await page.click(sel, timeout=3_000)
+                break
+            except Exception:
+                pass
+        await page.wait_for_load_state("networkidle", timeout=40_000)
+        return _parse_certidao_html(await page.content(), tipo)
+
+    try:
+        return await _run_playwright_no_cert(_tarefa)
+    except Exception as e:
+        return {"status": "em_analise", "observacao": f"Erro na consulta SEFAZ-{uf}: {e}. Acesse: {url}"}
 
 
 async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
-    """CND Municipal — varia por município. Estratégia limitada a municípios conhecidos."""
+    """CND Municipal — varia por município. Usa Playwright para municípios com portal JS."""
     _PORTAIS = {
         "manaus": "https://sefin.manaus.am.gov.br/certidao",
         "são paulo": "https://nfe.prefeitura.sp.gov.br/contribuinte/certidao.aspx",
         "rio de janeiro": "https://mobuss.rio.rj.gov.br/certidao",
         "belo horizonte": "https://bhiss.pbh.gov.br/bhiss/certidao",
+        "fortaleza": "https://sefin.fortaleza.ce.gov.br/certidao",
+        "curitiba": "https://www.curitiba.pr.gov.br/servicos/certidao",
+        "porto alegre": "https://prefeitura.poa.br/smf/certidao",
     }
     mun_key = municipio.lower().strip()
     url = _PORTAIS.get(mun_key, "")
     if not url:
         return {
             "status": "em_analise",
-            "observacao": f"Portal da Prefeitura de {municipio}/{uf} ainda não integrado. Consulte manualmente.",
+            "observacao": (
+                f"Portal da Prefeitura de {municipio}/{uf} ainda não integrado. "
+                f"Consulte manualmente no site da prefeitura."
+            ),
         }
 
-    import httpx
-    headers = {"User-Agent": "Mozilla/5.0 Chrome/125.0.0.0"}
-    async with httpx.AsyncClient(verify=False, timeout=30, follow_redirects=True) as c:
-        try:
-            r = await c.get(url, params={"cnpj": cnpj}, headers=headers)
-            html = r.text
-        except Exception:
-            html = ""
+    if not await _playwright_ok():
+        return {"status": "em_analise", "observacao": f"Playwright não disponível. Acesse: {url}"}
 
-    return _parse_certidao_html(html, "cnd_municipal")
+    cnpj_digits = re.sub(r'\D', '', cnpj)
+
+    async def _tarefa(page):
+        await page.goto(url, wait_until="networkidle", timeout=40_000)
+        for sel in ['input[name*="cnpj" i]', 'input[id*="cnpj" i]', 'input[type="text"]']:
+            try:
+                await page.fill(sel, cnpj_digits, timeout=3_000)
+                break
+            except Exception:
+                pass
+        for sel in ['button[type="submit"]', 'input[type="submit"]', 'input[type="image"]']:
+            try:
+                await page.click(sel, timeout=3_000)
+                break
+            except Exception:
+                pass
+        await page.wait_for_load_state("networkidle", timeout=40_000)
+        return _parse_certidao_html(await page.content(), "cnd_municipal")
+
+    try:
+        return await _run_playwright_no_cert(_tarefa)
+    except Exception as e:
+        return {"status": "em_analise", "observacao": f"Erro na consulta prefeitura {municipio}: {e}. Acesse o portal da prefeitura."}
 
 
 async def _consultar_cnd_falencia(cnpj: str, uf: str = "AM") -> dict:
@@ -1443,12 +1720,15 @@ def _parse_certidao_html(html: str, tipo: str) -> dict:
     numero = None
     for pat in [
         r'n[uú]mero\s*(?:da\s+certid[aã]o)?\s*:?\s*([A-Z0-9][A-Z0-9\-/.]{4,39})',
-        r'certid[aã]o\s+n[oº°]?\s*:?\s*([A-Z0-9][A-Z0-9\-/.]{4,39})',
-        r'c[oó]digo\s+(?:de\s+controle|de\s+verifica[cç][aã]o)\s*:?\s*([A-Z0-9\-]{6,30})',
-        r'protocolo\s*:?\s*([A-Z0-9\-]{6,30})',
+        r'certid[aã]o\s+n[oº°.]\s*:?\s*([A-Z0-9][A-Z0-9\-/.]{4,39})',
+        r'c[oó]digo\s+(?:de\s+controle|de\s+verifica[cç][aã]o)\s*:?\s*([A-Z0-9][A-Z0-9\-]{5,29})',
+        r'protocolo\s*:?\s*([A-Z0-9][A-Z0-9\-]{5,29})',
     ]:
         for m in re.finditer(pat, html, re.IGNORECASE):
             n = m.group(1).strip().rstrip('.')
+            # Deve conter pelo menos um dígito para ser um número de certidão real
+            if not re.search(r'\d', n):
+                continue
             if not any(n.lower().endswith(ext) for ext in _EXTENSOES):
                 if not re.search(r'[a-f0-9]{8}-[a-f0-9]{4}', n.lower()):  # não é UUID
                     numero = n

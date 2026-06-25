@@ -345,6 +345,35 @@ class DocumentoRecebido(Base):
 
 
 # ---------------------------------------------------------------------------
+# FORNECEDOR — Emitentes de notas recebidas (auto-cadastrado ou manual)
+# ---------------------------------------------------------------------------
+
+class Fornecedor(Base):
+    """Fornecedor/prestador de serviço identificado nas notas recebidas."""
+    __tablename__ = "fornecedores"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    escritorio_id: Mapped[int] = mapped_column(Integer, ForeignKey("escritorios.id"), index=True)
+
+    cnpj: Mapped[str] = mapped_column(String(18), index=True)
+    razao_social: Mapped[str] = mapped_column(String(300))
+    nome_fantasia: Mapped[Optional[str]] = mapped_column(String(300))
+    uf: Mapped[Optional[str]] = mapped_column(String(2))
+    municipio: Mapped[Optional[str]] = mapped_column(String(100))
+    email: Mapped[Optional[str]] = mapped_column(String(200))
+    telefone: Mapped[Optional[str]] = mapped_column(String(30))
+    categoria: Mapped[Optional[str]] = mapped_column(String(100))
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+    total_notas: Mapped[int] = mapped_column(Integer, default=0)
+    valor_total_notas: Mapped[float] = mapped_column(Float, default=0.0)
+    ultima_nota_em: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    criado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    atualizado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    escritorio: Mapped["Escritorio"] = relationship()
+
+
+# ---------------------------------------------------------------------------
 # CONTRATO — Faturamento Recorrente (NFS-e ou NF-e de valor fixo mensal)
 # ---------------------------------------------------------------------------
 
@@ -470,6 +499,33 @@ class FolhaMensal(Base):
     valor_total: Mapped[float] = mapped_column(Float, default=0.0)  # soma dos anteriores
 
     # "manual" = lançado pelo contador | "esocial" = importado via DCTFWeb/eSocial no futuro
+    origem: Mapped[str] = mapped_column(String(20), default="manual")
+    observacao: Mapped[Optional[str]] = mapped_column(String(300))
+
+    criado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    atualizado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    cliente: Mapped["Cliente"] = relationship()
+    escritorio: Mapped["Escritorio"] = relationship()
+
+
+# ---------------------------------------------------------------------------
+# ICMS MENSAL — Crédito, débito e saldo por competência
+# ---------------------------------------------------------------------------
+
+class IcmsMensal(Base):
+    """ICMS crédito/débito por competência — lançamento manual pelo contador."""
+    __tablename__ = "icms_mensal"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    escritorio_id: Mapped[int] = mapped_column(Integer, ForeignKey("escritorios.id"))
+    cliente_id: Mapped[int] = mapped_column(Integer, ForeignKey("clientes.id"), index=True)
+    competencia: Mapped[str] = mapped_column(String(7), index=True)  # YYYY-MM
+
+    credito: Mapped[float] = mapped_column(Float, default=0.0)   # ICMS sobre compras
+    debito: Mapped[float] = mapped_column(Float, default=0.0)    # ICMS sobre vendas
+    saldo: Mapped[float] = mapped_column(Float, default=0.0)     # débito − crédito (>0 = a recolher)
+
     origem: Mapped[str] = mapped_column(String(20), default="manual")
     observacao: Mapped[Optional[str]] = mapped_column(String(300))
 
