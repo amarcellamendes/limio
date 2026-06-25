@@ -30,16 +30,19 @@ router = APIRouter(prefix="/api/recebidos", tags=["Documentos Recebidos"])
 
 @router.get("/dashboard")
 async def dashboard_recebidos(
+    cliente_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     escritorio: Escritorio = Depends(get_escritorio_atual),
 ):
     hoje = datetime.utcnow()
     mes_atual = f"{hoje.year}-{hoje.month:02d}"
 
+    base_filter = [DocumentoRecebido.escritorio_id == escritorio.id]
+    if cliente_id:
+        base_filter.append(DocumentoRecebido.cliente_id == cliente_id)
+
     total_res = await db.execute(
-        select(func.count(DocumentoRecebido.id)).where(
-            DocumentoRecebido.escritorio_id == escritorio.id
-        )
+        select(func.count(DocumentoRecebido.id)).where(and_(*base_filter))
     )
     total = total_res.scalar() or 0
 
@@ -49,12 +52,7 @@ async def dashboard_recebidos(
             func.count(DocumentoRecebido.id).label("qtd"),
             func.sum(DocumentoRecebido.valor_total).label("valor"),
         )
-        .where(
-            and_(
-                DocumentoRecebido.escritorio_id == escritorio.id,
-                DocumentoRecebido.criado_em >= f"{mes_atual}-01",
-            )
-        )
+        .where(and_(*base_filter, DocumentoRecebido.criado_em >= f"{mes_atual}-01"))
         .group_by(DocumentoRecebido.tipo)
     )
     por_tipo = {row.tipo: {"qtd": row.qtd, "valor": round(row.valor or 0, 2)} for row in mes_res}
@@ -62,7 +60,7 @@ async def dashboard_recebidos(
     pendentes_res = await db.execute(
         select(func.count(DocumentoRecebido.id)).where(
             and_(
-                DocumentoRecebido.escritorio_id == escritorio.id,
+                *base_filter,
                 DocumentoRecebido.tipo == TipoNotaEnum.nfe,
                 DocumentoRecebido.status_manifestacao == "pendente",
             )
@@ -70,20 +68,22 @@ async def dashboard_recebidos(
     )
     pendentes_manifestacao = pendentes_res.scalar() or 0
 
-    # Notas EMITIDAS no mês
+    # Notas EMITIDAS no mês (filtro por cliente_id se fornecido)
+    emitidas_filters = [
+        Nota.escritorio_id == escritorio.id,
+        Nota.status == StatusNotaEnum.emitida,
+        Nota.criado_em >= f"{mes_atual}-01",
+    ]
+    if cliente_id:
+        emitidas_filters.append(Nota.cliente_id == cliente_id)
+
     emitidas_res = await db.execute(
         select(
             Nota.tipo,
             func.count(Nota.id).label("qtd"),
             func.sum(Nota.valor_total).label("valor"),
         )
-        .where(
-            and_(
-                Nota.escritorio_id == escritorio.id,
-                Nota.status == StatusNotaEnum.emitida,
-                Nota.criado_em >= f"{mes_atual}-01",
-            )
-        )
+        .where(and_(*emitidas_filters))
         .group_by(Nota.tipo)
     )
     emitidas_por_tipo = {
@@ -92,11 +92,11 @@ async def dashboard_recebidos(
     }
 
     # Totais históricos
+    total_emitidas_filters = [Nota.escritorio_id == escritorio.id, Nota.status == StatusNotaEnum.emitida]
+    if cliente_id:
+        total_emitidas_filters.append(Nota.cliente_id == cliente_id)
     total_emitidas_res = await db.execute(
-        select(func.count(Nota.id)).where(
-            Nota.escritorio_id == escritorio.id,
-            Nota.status == StatusNotaEnum.emitida,
-        )
+        select(func.count(Nota.id)).where(and_(*total_emitidas_filters))
     )
     total_emitidas = total_emitidas_res.scalar() or 0
 
@@ -407,44 +407,19 @@ async def sincronizar_cliente(
                 "xmotivo": resultado.get("xmotivo", ""),
             }
 
+        elif cert_path and cert_senha:
+            # Cert configurado mas arquivo não localizado no servidor — retorna aviso, sem mock
+            raise HTTPException(
+                422,
+                f"Certificado A1 configurado mas não encontrado no servidor (path: {cert_path}). "
+                "Re-faça o upload do certificado nas configurações do cliente.",
+            )
         else:
-            # Sem certificado — fallback mock para demonstração
-            import random
-            for i in range(3):
-                chave = "".join([str(random.randint(0, 9)) for _ in range(44)])
-                novo = DocumentoRecebido(
-                    escritorio_id=escritorio.id,
-                    cliente_id=cliente_id,
-                    tipo=TipoNotaEnum.nfe if i < 2 else TipoNotaEnum.nfse,
-                    origem="sefaz_dfe",
-                    chave_acesso=chave,
-                    numero=f"{1000 + i}",
-                    serie="1",
-                    data_emissao=datetime.utcnow(),
-                    emitente_cnpj=f"11.222.333/000{i+1}-00",
-                    emitente_razao_social=f"Fornecedor Demo {i+1} Ltda",
-                    emitente_uf="AM",
-                    emitente_municipio="Manaus",
-                    valor_total=round(500 + random.random() * 9500, 2),
-                    natureza_operacao="Venda de mercadorias",
-                    status_manifestacao="pendente",
-                )
-                db.add(novo)
-                await upsert_fornecedor(
-                    db, escritorio.id,
-                    cnpj=novo.emitente_cnpj,
-                    razao_social=novo.emitente_razao_social,
-                    uf=novo.emitente_uf,
-                    municipio=novo.emitente_municipio,
-                    valor_nota=novo.valor_total or 0.0,
-                    data_nota=novo.data_emissao,
-                )
-                importados += 1
-            await db.commit()
+            # Sem nenhum certificado configurado — avisa sem criar mocks
             return {
-                "importados": importados,
-                "mensagem": f"{importados} documentos importados (modo mock — dados de demonstração)",
-                "aviso": "Configure o caminho do certificado A1 no cadastro do cliente para sincronizar com a SEFAZ.",
+                "importados": 0,
+                "mensagem": "Nenhum certificado A1 configurado para este cliente.",
+                "aviso": "Configure o certificado A1 nas configurações do cliente para sincronizar com a SEFAZ.",
             }
 
     # ── Sync NFS-e recebidas (Nacional / ABRASF / SP) ──────────────────────────

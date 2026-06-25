@@ -1153,7 +1153,7 @@ async def _consultar_cnd_federal(cnpj: str) -> dict:
             except Exception:
                 pass
         await page.wait_for_load_state("networkidle", timeout=40_000)
-        return _parse_certidao_html(await page.content(), "cnd_federal")
+        return _parse_certidao_html(await page.content(), "cnd_federal", page_url=page.url)
 
     try:
         return await _run_playwright_no_cert(_tarefa)
@@ -1184,7 +1184,7 @@ async def _consultar_cnd_fgts(cnpj: str) -> dict:
             except Exception:
                 pass
         await page.wait_for_load_state("networkidle", timeout=40_000)
-        return _parse_certidao_html(await page.content(), "cnd_fgts")
+        return _parse_certidao_html(await page.content(), "cnd_fgts", page_url=page.url)
 
     try:
         return await _run_playwright_no_cert(_tarefa)
@@ -1214,7 +1214,7 @@ async def _consultar_cndt_tst(cnpj: str) -> dict:
             except Exception:
                 pass
         await page.wait_for_load_state("networkidle", timeout=40_000)
-        return _parse_certidao_html(await page.content(), "cndt_tst")
+        return _parse_certidao_html(await page.content(), "cndt_tst", page_url=page.url)
 
     try:
         return await _run_playwright_no_cert(_tarefa)
@@ -1275,7 +1275,7 @@ async def _consultar_cndt_trt(cnpj: str, uf: str) -> dict:
             except Exception:
                 pass
         await page.wait_for_load_state("networkidle", timeout=40_000)
-        result = _parse_certidao_html(await page.content(), "cndt_trt")
+        result = _parse_certidao_html(await page.content(), "cndt_trt", page_url=page.url)
         result["observacao"] = f"TRT consultado: {uf} → {trt_url}"
         return result
 
@@ -1325,7 +1325,7 @@ async def _consultar_cnd_estadual(cnpj: str, uf: str, tipo: str) -> dict:
             except Exception:
                 pass
         await page.wait_for_load_state("networkidle", timeout=40_000)
-        return _parse_certidao_html(await page.content(), tipo)
+        return _parse_certidao_html(await page.content(), tipo, page_url=page.url)
 
     try:
         return await _run_playwright_no_cert(_tarefa)
@@ -1375,7 +1375,7 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
             except Exception:
                 pass
         await page.wait_for_load_state("networkidle", timeout=40_000)
-        return _parse_certidao_html(await page.content(), "cnd_municipal")
+        return _parse_certidao_html(await page.content(), "cnd_municipal", page_url=page.url)
 
     try:
         return await _run_playwright_no_cert(_tarefa)
@@ -1553,12 +1553,30 @@ def _parse_pgdas_lxml(html: str, ano: int, mes_fixo: Optional[int] = None) -> li
         # Coleta texto de todas as células de todas as tabelas
         for table in tree.iter("table"):
             rows = list(table.iter("tr"))
+
+            # Detecta colunas pelo cabeçalho para saber qual é competência vs receita bruta
+            header_cells: list[str] = []
+            comp_col = val_col = -1
+            for row in rows[:5]:  # verifica só as primeiras linhas buscando cabeçalho
+                ths = [" ".join(c.text_content().split()).upper() for c in row.iter("th", "td")]
+                for i, th in enumerate(ths):
+                    if comp_col < 0 and re.search(r'COMPET|PERÍODO|PERIODO', th):
+                        comp_col = i
+                    if val_col < 0 and re.search(r'RECEITA\s*BRUTA|FATURAMENTO|VALOR\s*TOTAL|VALOR\s*DA\s*RECEITA', th):
+                        val_col = i
+                if comp_col >= 0 and val_col >= 0:
+                    header_cells = ths
+                    break
+
             for row in rows:
                 cells = [" ".join(td.text_content().split()) for td in row.iter("td", "th")]
                 row_text = " ".join(cells)
 
                 # Procura competência MM/AAAA
-                comp_m = re.search(r'(\d{2})/(\d{4})', row_text)
+                if comp_col >= 0 and comp_col < len(cells):
+                    comp_m = re.search(r'(\d{2})/(\d{4})', cells[comp_col])
+                else:
+                    comp_m = re.search(r'(\d{2})/(\d{4})', row_text)
                 if not comp_m:
                     continue
                 mes_str, ano_str = comp_m.group(1), comp_m.group(2)
@@ -1568,10 +1586,20 @@ def _parse_pgdas_lxml(html: str, ano: int, mes_fixo: Optional[int] = None) -> li
                     continue
 
                 # Procura valor R$
-                val_m = re.search(r'R\$\s*([\d.,]+)', row_text)
+                search_text = cells[val_col] if val_col >= 0 and val_col < len(cells) else row_text
+                val_m = re.search(r'R\$\s*([\d.,]+)', search_text)
                 if not val_m:
-                    # Tenta achar número grande na linha (receita bruta esperada)
-                    val_m = re.search(r'([\d]{1,3}(?:\.[\d]{3})+,[\d]{2})', row_text)
+                    val_m = re.search(r'([\d]{1,3}(?:\.[\d]{3})+,[\d]{2})', search_text)
+                if not val_m and val_col < 0:
+                    # Tenta qualquer número >=1000 na linha (receita bruta mínima esperada)
+                    for num_m in re.finditer(r'([\d]{1,3}(?:\.[\d]{3})*,[\d]{2})', row_text):
+                        try:
+                            v = float(num_m.group(1).replace(".", "").replace(",", "."))
+                            if v >= 1000:
+                                val_m = num_m
+                                break
+                        except ValueError:
+                            pass
                 if not val_m:
                     continue
 
@@ -1627,18 +1655,41 @@ def _parse_esocial_lxml(html: str, ano: int) -> list:
         tree = lxml_html.fromstring(html)
 
         for table in tree.iter("table"):
-            for row in table.iter("tr"):
-                cells = [" ".join(td.text_content().split()) for td in row.iter("td")]
+            rows = list(table.iter("tr"))
+            comp_col = val_col = -1
+            for row in rows[:5]:
+                ths = [" ".join(c.text_content().split()).upper() for c in row.iter("th", "td")]
+                for i, th in enumerate(ths):
+                    if comp_col < 0 and re.search(r'COMPET|PERÍODO|PERIODO|MÊS|MES', th):
+                        comp_col = i
+                    if val_col < 0 and re.search(r'SALÁRIO|SALARIO|FOLHA|REMUNER|TOTAL', th):
+                        val_col = i
+                if comp_col >= 0 and val_col >= 0:
+                    break
+
+            for row in rows:
+                cells = [" ".join(td.text_content().split()) for td in row.iter("td", "th")]
                 row_text = " ".join(cells)
-                comp_m = re.search(r'(\d{2})/(\d{4})', row_text)
+                search_comp = cells[comp_col] if comp_col >= 0 and comp_col < len(cells) else row_text
+                comp_m = re.search(r'(\d{2})/(\d{4})', search_comp)
                 if not comp_m:
                     continue
                 mes_s, ano_s = comp_m.group(1), comp_m.group(2)
                 if int(ano_s) != ano:
                     continue
-                val_m = re.search(r'R\$\s*([\d.,]+)', row_text)
+                search_val = cells[val_col] if val_col >= 0 and val_col < len(cells) else row_text
+                val_m = re.search(r'R\$\s*([\d.,]+)', search_val)
                 if not val_m:
-                    val_m = re.search(r'([\d]{1,3}(?:\.[\d]{3})+,[\d]{2})', row_text)
+                    val_m = re.search(r'([\d]{1,3}(?:\.[\d]{3})+,[\d]{2})', search_val)
+                if not val_m:
+                    for num_m in re.finditer(r'([\d]{1,3}(?:\.[\d]{3})*,[\d]{2})', row_text):
+                        try:
+                            v = float(num_m.group(1).replace(".", "").replace(",", "."))
+                            if v >= 100:
+                                val_m = num_m
+                                break
+                        except ValueError:
+                            pass
                 if not val_m:
                     continue
                 val = val_m.group(1).replace(".", "").replace(",", ".")
@@ -1668,26 +1719,46 @@ def _parse_esocial_lxml(html: str, ano: int) -> list:
     return folhas
 
 
-def _parse_certidao_html(html: str, tipo: str) -> dict:
+def _parse_certidao_html(html: str, tipo: str, page_url: str = "") -> dict:
     """Extrai status e validade de uma certidão a partir do HTML retornado pelo portal."""
     html_up = html.upper()
 
+    # Determina se o HTML tem conteúdo real ou é apenas shell JS
+    html_text_len = len(re.sub(r'<[^>]+>', '', html).strip())
+
     # Determina status
+    obs_auto = None
     if any(k in html_up for k in ["NEGATIVA COM EFEITO DE POSITIVA", "POSITIVA COM EFEITO DE NEGATIVA"]):
         status = "regular"
-    elif any(k in html_up for k in ["CERTIDÃO NEGATIVA", "NEGATIVA DE DÉBITO", "NADA CONSTA",
-                                     "SEM DÉBITO", "REGULARIDADE FISCAL", "SITUAÇÃO REGULAR"]):
+    elif any(k in html_up for k in [
+        "CERTIDÃO NEGATIVA", "CERTIDAO NEGATIVA", "NEGATIVA DE DÉBITO", "NEGATIVA DE DEBITO",
+        "NADA CONSTA", "SEM DÉBITO", "SEM DEBITO", "REGULARIDADE FISCAL", "SITUAÇÃO REGULAR",
+        "SITUACAO REGULAR", "CERTIDÃO DE REGULARIDADE", "CERTIDAO DE REGULARIDADE",
+        "CERTIDÃO POSITIVA COM EFEITO DE NEGATIVA", "NENHUM DÉBITO", "NENHUM DEBITO",
+    ]):
         status = "regular"
     elif any(k in html_up for k in ["NEGATIVA", "REGULAR"]) and not any(
-            k in html_up for k in ["POSITIVA", "IRREGULAR", "DÉBITO", "PENDÊNCIA"]):
+            k in html_up for k in ["POSITIVA", "IRREGULAR", "DÉBITO", "DEBITO", "PENDÊNCIA", "PENDENCIA"]):
         status = "regular"
-    elif any(k in html_up for k in ["POSITIVA", "DÉBITOS", "IRREGUL", "PENDÊNCIA", "DEVEDOR",
-                                     "EM ABERTO", "NÃO REGULAR"]):
+    elif any(k in html_up for k in [
+        "POSITIVA", "DÉBITOS", "DEBITOS", "IRREGUL", "PENDÊNCIA", "PENDENCIA", "DEVEDOR",
+        "EM ABERTO", "NÃO REGULAR", "NAO REGULAR", "EMISSÃO IMPEDIDA", "EMISSAO IMPEDIDA",
+    ]):
         status = "irregular"
-    elif any(k in html_up for k in ["PROCESSANDO", "AGUARDANDO", "ANÁLISE", "EM PROCESSAMENTO"]):
+    elif any(k in html_up for k in ["PROCESSANDO", "AGUARDANDO", "ANÁLISE", "ANALISE", "EM PROCESSAMENTO"]):
         status = "em_analise"
+    elif html_text_len < 200:
+        # Página em branco ou apenas JS — Playwright pode não ter esperado render completo
+        status = "em_analise"
+        obs_auto = f"Portal retornou página com pouco conteúdo ({html_text_len} chars). Tente novamente ou acesse manualmente."
     else:
-        status = "pendente"
+        # HTML tem conteúdo mas não reconhecemos keywords — pode ser CAPTCHA, login ou layout novo
+        status = "em_analise"
+        title_m = re.search(r'<title[^>]*>([^<]+)</title>', html, re.IGNORECASE)
+        title = title_m.group(1).strip() if title_m else "(sem título)"
+        obs_auto = f"Portal respondeu (título: {title}) mas keywords de certidão não foram encontradas. Verifique manualmente."
+        if page_url:
+            obs_auto += f" URL: {page_url}"
 
     # Extrai data de validade — prioriza padrões específicos e datas futuras
     hoje = date.today()
@@ -1740,5 +1811,5 @@ def _parse_certidao_html(html: str, tipo: str) -> dict:
         "status": status,
         "data_validade": data_validade,
         "numero_certidao": numero,
-        "observacao": None,
+        "observacao": obs_auto,
     }

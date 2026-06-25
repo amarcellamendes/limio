@@ -195,46 +195,49 @@
       <div class="pt-2 pb-1 px-4">
         <p class="text-xs text-white/50 uppercase tracking-widest font-semibold">Emissão</p>
       </div>
+      <button @click="goto('dashboard-notas')" :class="page==='dashboard-notas' ? 'active' : ''" class="sl w-full">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+        <span class="flex-1 text-left truncate">Dashboard Notas</span>
+      </button>
       <button @click="goto('apuracao')" :class="page==='apuracao' ? 'active' : ''" class="sl w-full">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 11h.01M12 11h.01M15 11h.01M4 19h16a2 2 0 002-2V7a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
-        Apuração de Tributos
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 11h.01M12 11h.01M15 11h.01M4 19h16a2 2 0 002-2V7a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+        <span class="flex-1 text-left truncate">Apuração de Tributos</span>
       </button>
       <button @click="goto('contratos')" :class="page==='contratos' ? 'active' : ''" class="sl w-full">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-        Contratos Recorrentes
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        <span class="flex-1 text-left truncate">Contratos Recorrentes</span>
         <span x-show="contratosNaFila?.length > 0" x-cloak
-              class="ml-auto text-xs font-bold bg-amber-500 text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center"
+              class="flex-shrink-0 text-xs font-bold bg-amber-500 text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center"
               x-text="contratosNaFila.length"></span>
       </button>
       <button @click="goto('emitir-nfse')" :class="page==='emitir-nfse' ? 'active' : ''" class="sl w-full">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-        Emitir NFS-e
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        <span class="flex-1 text-left truncate">Emitir NFS-e</span>
       </button>
       <button @click="goto('emitir-nfe')" :class="page==='emitir-nfe' ? 'active' : ''" class="sl w-full">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
-        Emitir NF-e
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+        <span class="flex-1 text-left truncate">Emitir NF-e</span>
       </button>
+      <div class="pt-2 pb-1 px-4">
+        <p class="text-xs text-white/50 uppercase tracking-widest font-semibold">Certidões</p>
+      </div>
       <button @click="goto('certidoes')" :class="page==='certidoes' ? 'active' : ''" class="sl w-full">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-        Certidões
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        <span class="flex-1 text-left truncate">Certidões</span>
         <span x-show="certidoes.vencendo.length > 0" x-cloak
-              class="ml-auto text-xs font-bold bg-red-500 text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center"
+              class="flex-shrink-0 text-xs font-bold bg-red-500 text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center"
               x-text="certidoes.vencendo.length"></span>
       </button>
       <div class="pt-2 pb-1 px-4">
         <p class="text-xs text-white/50 uppercase tracking-widest font-semibold">Cadastros</p>
       </div>
       <button @click="goto('clientes')" :class="page==='clientes' ? 'active' : ''" class="sl w-full">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
-        Clientes (CNPJs)
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+        <span class="flex-1 text-left truncate">Clientes (CNPJs)</span>
       </button>
       <button @click="goto('fornecedores')" :class="page==='fornecedores' ? 'active' : ''" class="sl w-full">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z"/></svg>
-        Fornecedores
-      </button>
-      <button @click="goto('dashboard-notas')" :class="page==='dashboard-notas' ? 'active' : ''" class="sl w-full">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-        Dashboard Notas
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z"/></svg>
+        <span class="flex-1 text-left truncate">Fornecedores</span>
       </button>
 
       <div class="pt-2 pb-1 px-4">
@@ -500,6 +503,10 @@
           <table class="w-full text-sm">
             <thead>
               <tr class="border-b-2 border-gray-100">
+                <th class="py-3 px-2 w-8">
+                  <input type="checkbox" class="w-3.5 h-3.5 accent-accent"
+                         @change="notas.forEach(n => n._sel = $event.target.checked)" />
+                </th>
                 <th class="text-left py-3 px-2 text-xs text-gray-500 font-semibold uppercase">Número</th>
                 <th class="text-left py-3 px-2 text-xs text-gray-500 font-semibold uppercase">Tipo</th>
                 <th class="text-left py-3 px-2 text-xs text-gray-500 font-semibold uppercase">Cliente</th>
@@ -512,7 +519,8 @@
             </thead>
             <tbody>
               <template x-for="n in notas" :key="n.id">
-                <tr class="border-b border-gray-50 hover:bg-gray-50">
+                <tr class="border-b border-gray-50 hover:bg-gray-50" :class="n._sel ? 'bg-blue-50' : ''">
+                  <td class="py-3 px-2 w-8"><input type="checkbox" x-model="n._sel" class="w-3.5 h-3.5 accent-accent" /></td>
                   <td class="py-3 px-2 font-mono text-xs text-gray-600" x-text="n.numero || `#${n.id}`"></td>
                   <td class="py-3 px-2"><span :class="`badge-${n.tipo}`" x-text="n.tipo?.toUpperCase()"></span></td>
                   <td class="py-3 px-2 max-w-[140px] truncate text-xs" x-text="n.cliente_razao_social || '—'"></td>
@@ -593,6 +601,25 @@
         <!-- Tomador -->
         <div class="card">
           <h3 class="font-semibold text-primary mb-4">Tomador de Serviços</h3>
+
+          <!-- Busca rápida por tomador já cadastrado -->
+          <div class="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl">
+            <label class="label text-blue-700 text-xs mb-1">Buscar tomador já cadastrado</label>
+            <div class="flex gap-2">
+              <input type="text" x-model="nfseForm.buscaTomador" @input="filtrarTomadoresCadastrados()"
+                     placeholder="Nome ou CNPJ do tomador…" class="input text-sm" />
+            </div>
+            <div x-show="nfseForm.tomadoresFiltrados?.length" class="mt-2 border rounded-lg overflow-hidden shadow-sm bg-white max-h-36 overflow-y-auto">
+              <template x-for="t in nfseForm.tomadoresFiltrados" :key="t.cnpj">
+                <button type="button" @click="preencherTomadorNFSe(t)"
+                        class="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 border-b last:border-0 flex justify-between items-center">
+                  <span class="font-medium truncate" x-text="t.razao_social"></span>
+                  <span class="text-gray-400 font-mono ml-2 flex-shrink-0" x-text="fmtCNPJ(t.cnpj)"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+
           <div class="grid grid-cols-2 gap-3">
             <div class="col-span-2">
               <label class="label">CPF / CNPJ</label>
@@ -1024,13 +1051,6 @@
           <p class="text-sm text-gray-500">CNPJs gerenciados pelo escritório</p>
         </div>
         <div class="flex gap-2">
-          <button @click="buscarEmLote()" :disabled="integracao.buscandoLote" class="btn-secondary flex items-center gap-2">
-            <span x-show="!integracao.buscandoLote">🔍 Busca em Lote (PGDAS-D + eSocial)</span>
-            <span x-show="integracao.buscandoLote" class="flex items-center gap-2">
-              <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path></svg>
-              Buscando...
-            </span>
-          </button>
           <button @click="abrirModalCliente(null)" class="btn-primary">+ Novo Cliente</button>
         </div>
       </div>
@@ -1092,6 +1112,13 @@
           <h2 class="text-xl font-bold text-primary">Apuração de Tributos</h2>
           <p class="text-sm text-gray-500">Totais mensais por tributo e controle do limite Simples Nacional</p>
         </div>
+        <button @click="buscarEmLote()" :disabled="integracao.buscandoLote" class="btn-secondary flex items-center gap-2">
+          <span x-show="!integracao.buscandoLote">🔍 Busca em Lote (PGDAS-D + eSocial)</span>
+          <span x-show="integracao.buscandoLote" class="flex items-center gap-2">
+            <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path></svg>
+            Buscando...
+          </span>
+        </button>
       </div>
 
       <!-- Seleção cliente + ano -->
@@ -1208,18 +1235,71 @@
             <div>
               <h3 class="font-bold text-gray-700">Faturamento — Lucro Presumido / Real</h3>
               <p class="text-xs text-gray-400">
-                Para empresas LP/LR: acompanhe o faturamento mensal para controle de enquadramento
-                e planejamento tributário. Busca via e-CAC (certificado A1) ou lance manualmente.
+                Para empresas LP/LR: acompanhe o faturamento mensal. Busca via EFD Contribuições
+                (e-CAC) ou lance manualmente abaixo.
               </p>
             </div>
             <button @click="buscarFaturamentoLP(apuracao.clienteId)"
+                    :disabled="integracao.buscandoFaturamentoLP"
                     class="btn-secondary text-xs px-2 py-1 flex items-center gap-1"
-                    title="Busca no e-CAC usando o certificado A1 do cliente">
-              🔗 Buscar via DCTFWeb / MIT
+                    title="Busca no e-CAC → EFD Contribuições usando o certificado A1 do cliente">
+              <span x-show="!integracao.buscandoFaturamentoLP">🔗 Buscar via EFD Contribuições</span>
+              <span x-show="integracao.buscandoFaturamentoLP">⏳ Consultando...</span>
             </button>
           </div>
-          <div class="text-xs text-gray-400 italic">
-            Lance abaixo ou use o botão para buscar automaticamente. Use também a seção "Receita Histórica" abaixo se disponível.
+          <div x-show="integracao.avisoFaturamentoLP"
+               class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mb-3"
+               x-text="integracao.avisoFaturamentoLP"></div>
+
+          <!-- Lançamento manual LP/LR -->
+          <button @click="apuracao.mostrarLancamentoLP = !apuracao.mostrarLancamentoLP"
+                  class="text-xs text-accent underline mb-3"
+                  x-text="apuracao.mostrarLancamentoLP ? 'Ocultar lançamento' : 'Lance abaixo ou use o botão para buscar automaticamente'"></button>
+
+          <div x-show="apuracao.mostrarLancamentoLP" class="mt-3">
+            <div class="flex gap-3 items-end mb-3">
+              <div>
+                <label class="label">Competência</label>
+                <input type="month" x-model="apuracao.lpForm.competencia" class="input" />
+              </div>
+              <div class="flex-1">
+                <label class="label">Receita bruta do mês (EFD Contribuições / SPED)</label>
+                <input type="number" x-model.number="apuracao.lpForm.valor_receita" class="input" step="0.01" min="0" placeholder="0,00" />
+              </div>
+              <div>
+                <label class="label">Fonte</label>
+                <select x-model="apuracao.lpForm.origem" class="input">
+                  <option value="efd_contrib">EFD Contribuições</option>
+                  <option value="manual">Lançamento manual</option>
+                </select>
+              </div>
+              <button @click="salvarReceitaLP()" class="btn-primary text-sm">Salvar</button>
+            </div>
+            <div x-show="apuracao.receitasLP?.length" class="overflow-x-auto">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="border-b text-gray-400">
+                    <th class="pb-1 text-left">Competência</th>
+                    <th class="pb-1 text-right">Faturamento</th>
+                    <th class="pb-1 text-left ml-2">Fonte</th>
+                    <th class="pb-1"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="h in apuracao.receitasLP" :key="h.competencia">
+                    <tr class="border-b border-gray-100 hover:bg-gray-50">
+                      <td class="py-1 font-medium" x-text="h.competencia"></td>
+                      <td class="py-1 text-right font-semibold text-primary" x-text="'R$ ' + h.valor_receita.toLocaleString('pt-BR',{minimumFractionDigits:2})"></td>
+                      <td class="py-1 ml-2 text-gray-500" x-text="h.origem === 'efd_contrib' ? 'EFD Contribuições' : 'Manual'"></td>
+                      <td class="py-1 text-right">
+                        <button @click="apuracao.lpForm = {competencia:h.competencia, valor_receita:h.valor_receita, origem:h.origem}; apuracao.mostrarLancamentoLP=true" class="text-blue-500 hover:underline text-xs">editar</button>
+                        <button @click="excluirReceitaLP(h.competencia)" class="text-red-500 hover:underline text-xs ml-2">excluir</button>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 
@@ -2150,9 +2230,23 @@
 
     <!-- ── DASHBOARD NOTAS ── -->
     <div x-show="page==='dashboard-notas'" class="p-6 max-w-5xl" x-init="if(page==='dashboard-notas') carregarDashboardNotas()">
-      <div class="mb-6">
-        <h2 class="text-xl font-bold text-primary">Dashboard de Notas</h2>
-        <p class="text-sm text-gray-500">Visão consolidada de notas emitidas e recebidas por tipo</p>
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-xl font-bold text-primary">Dashboard de Notas</h2>
+          <p class="text-sm text-gray-500">Visão consolidada de notas emitidas e recebidas por tipo</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <div>
+            <label class="label text-xs mb-1">Filtrar por cliente</label>
+            <select x-model="dashNotas.clienteId" @change="carregarDashboardNotas()" class="input text-sm py-1.5">
+              <option value="">Todos os clientes</option>
+              <template x-for="c in clientes" :key="c.id">
+                <option :value="c.id" x-text="c.razao_social"></option>
+              </template>
+            </select>
+          </div>
+          <button @click="carregarDashboardNotas()" class="btn-secondary text-sm mt-4">↺ Atualizar</button>
+        </div>
       </div>
 
       <div x-show="dashNotas.carregando" class="text-center py-12 text-gray-400">Carregando…</div>
@@ -2667,6 +2761,10 @@
         <table x-show="docsRecebidos.length" class="w-full text-sm">
           <thead>
             <tr class="bg-gray-50 border-b">
+              <th class="px-3 py-3 w-8">
+                <input type="checkbox" class="w-3.5 h-3.5 accent-accent"
+                       @change="docsRecebidos.forEach(d => d._sel = $event.target.checked)" />
+              </th>
               <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Tipo</th>
               <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Emitente / Fornecedor</th>
               <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Destinatário</th>
@@ -2679,9 +2777,9 @@
           </thead>
           <tbody class="divide-y divide-gray-100">
             <template x-for="d in docsRecebidos" :key="d.id">
-              <tr class="hover:bg-gray-50 transition-colors">
-                <td class="px-4 py-3">
-                  <span :class="d.tipo === 'nfe' ? 'badge-nfe' : d.tipo === 'nfce' ? 'badge-substituida' : 'badge-nfse'"
+              <tr class="hover:bg-gray-50 transition-colors" :class="d._sel ? 'bg-blue-50' : ''">
+                <td class="px-3 py-3 w-8"><input type="checkbox" x-model="d._sel" class="w-3.5 h-3.5 accent-accent" /></td>
+                <td class="px-4 py-3"><span :class="d.tipo === 'nfe' ? 'badge-nfe' : d.tipo === 'nfce' ? 'badge-substituida' : 'badge-nfse'"
                         x-text="d.tipo === 'nfe' ? 'NF-e' : d.tipo === 'nfce' ? 'NFC-e' : 'NFS-e'"></span>
                 </td>
                 <td class="px-4 py-3">
@@ -2697,8 +2795,8 @@
                 <td class="px-4 py-3 text-right font-semibold text-gray-800 text-xs"
                     x-text="d.valor_total ? 'R$ ' + d.valor_total.toLocaleString('pt-BR', {minimumFractionDigits:2}) : '—'"></td>
                 <td class="px-4 py-3">
-                  <span :class="d.origem === 'manual' ? 'badge-manual' : d.origem === 'nfeio' ? 'badge-nfse' : 'badge-emitida'"
-                        x-text="d.origem === 'manual' ? 'Manual' : d.origem === 'nfeio' ? 'NFe.io' : 'SEFAZ'"></span>
+                  <span :class="d.origem === 'manual' ? 'badge-manual' : d.origem === 'nfeio' ? 'badge-nfse' : d.origem === 'mock' ? 'badge-substituida' : 'badge-emitida'"
+                        x-text="d.origem === 'manual' ? 'Manual' : d.origem === 'nfeio' ? 'NFe.io' : d.origem === 'mock' ? 'Demo' : d.origem === 'sefaz_nfse' ? 'SEFAZ NFS-e' : 'SEFAZ'"></span>
                 </td>
                 <td class="px-4 py-3">
                   <template x-if="d.tipo === 'nfe' || d.tipo === 'nfce'">
@@ -3479,7 +3577,7 @@ function app() {
     certVencendo: [],
 
     // Integrações RF/eSocial
-    integracao: { buscandoPgdas: false, buscandoEsocial: false, buscandoLote: false, modalSenha: false, senhaTemp: '', acaoAposSenha: null },
+    integracao: { buscandoPgdas: false, buscandoEsocial: false, buscandoLote: false, buscandoFaturamentoLP: false, avisoFaturamentoLP: '', modalSenha: false, senhaTemp: '', acaoAposSenha: null },
     certidoes: {
       lista: [], vencendo: [], filtroCliente: '', modalShow: false, modalEditando: false, modalId: null, modalErro: '',
       consultandoAuto: false, autoResultado: null, buscandoLote: false,
@@ -3578,7 +3676,7 @@ function app() {
     },
 
     // Dashboard Notas
-    dashNotas: { carregando: false, dados: null, aviso_mock: false },
+    dashNotas: { carregando: false, dados: null, aviso_mock: false, clienteId: '' },
 
     // Documentos Recebidos
     docsRecebidos: [],
@@ -3599,6 +3697,7 @@ function app() {
       is_construtora: false,
       obra_cei: '', obra_art: '', obra_alvara: '', obra_matricula: '',
       obra_endereco: '', obra_inss_aliquota: 0,
+      buscaTomador: '', tomadoresFiltrados: [],
       tomador: { cpf_cnpj:'', razao_social:'', email:'', logradouro:'', numero:'',
                  complemento:'', bairro:'', municipio:'', codigo_ibge:'', uf:'', cep:'' }
     },
@@ -3629,6 +3728,9 @@ function app() {
       folhaForm: { competencia:'', valor_salarios:0, valor_pro_labore:0, valor_inss_patronal:0, valor_fgts:0, observacao:'' },
       mostrarReceita: false, receitasHistoricas: [],
       receitaForm: { competencia:'', valor_receita:0, origem:'pgdas_d' },
+      mostrarLancamentoLP: false,
+      receitasLP: [],
+      lpForm: { competencia:'', valor_receita:0, origem:'efd_contribuicoes' },
     },
 
     // Contratos
@@ -4343,13 +4445,34 @@ function app() {
     async carregarDashboardNotas() {
       this.dashNotas.carregando = true
       try {
-        const r = await this.api('/api/recebidos/dashboard')
+        const p = new URLSearchParams()
+        if (this.dashNotas.clienteId) p.append('cliente_id', this.dashNotas.clienteId)
+        const qs = p.toString() ? '?' + p.toString() : ''
+        const r = await this.api('/api/recebidos/dashboard' + qs)
         this.dashNotas.dados = r
-        // Detecta se os dados são mock (todos fornecedores "Demo")
         const recebidas = await this.api('/api/recebidos?limit=3')
-        this.dashNotas.aviso_mock = recebidas.some(d => d.emitente_razao_social?.includes('Demo'))
+        this.dashNotas.aviso_mock = recebidas.some(d => d.emitente_razao_social?.includes('Demo') || d.origem === 'mock')
       } catch(e) {}
       this.dashNotas.carregando = false
+    },
+
+    filtrarTomadoresCadastrados() {
+      const q = (this.nfseForm.buscaTomador || '').toLowerCase().trim()
+      if (!q) { this.nfseForm.tomadoresFiltrados = []; return }
+      const lista = this.fornecedores?.lista || []
+      this.nfseForm.tomadoresFiltrados = lista.filter(f =>
+        f.razao_social?.toLowerCase().includes(q) || f.cnpj?.includes(q)
+      ).slice(0, 8)
+    },
+
+    preencherTomadorNFSe(t) {
+      this.nfseForm.tomador.cpf_cnpj = t.cnpj || ''
+      this.nfseForm.tomador.razao_social = t.razao_social || ''
+      this.nfseForm.tomador.email = t.email || ''
+      this.nfseForm.tomador.municipio = t.municipio || ''
+      this.nfseForm.tomador.uf = t.uf || ''
+      this.nfseForm.buscaTomador = ''
+      this.nfseForm.tomadoresFiltrados = []
     },
 
     async carregarRecebidos() {
@@ -4472,7 +4595,7 @@ function app() {
         })
         if (!r.ok) throw new Error()
         this.apuracao.dados = await r.json()
-        await Promise.all([this.carregarListaFolhas(), this.carregarReceitasHistoricas()])
+        await Promise.all([this.carregarListaFolhas(), this.carregarReceitasHistoricas(), this.carregarReceitasLP()])
       } catch(e) {
         this.showToast('Erro ao calcular apuração', 'error')
       } finally {
@@ -4570,6 +4693,45 @@ function app() {
           method: 'DELETE', headers: { Authorization: 'Bearer ' + this.token }
         })
         await this.carregarApuracao()
+      } catch(e) { this.showToast('Erro ao excluir', 'error') }
+    },
+
+    async carregarReceitasLP() {
+      if (!this.apuracao.clienteId) return
+      try {
+        const r = await fetch(`/api/receita-historica/${this.apuracao.clienteId}`, {
+          headers: { Authorization: 'Bearer ' + this.token }
+        })
+        if (r.ok) {
+          const all = await r.json()
+          this.apuracao.receitasLP = all.filter(h => h.origem?.startsWith('lp_'))
+        }
+      } catch(e) {}
+    },
+
+    async salvarReceitaLP() {
+      const { competencia, valor_receita, origem } = this.apuracao.lpForm
+      if (!competencia || !this.apuracao.clienteId) return
+      try {
+        const r = await fetch(`/api/receita-historica/${this.apuracao.clienteId}/${competencia}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + this.token },
+          body: JSON.stringify({ valor_receita: +valor_receita || 0, origem: 'lp_' + origem }),
+        })
+        if (!r.ok) throw new Error()
+        this.showToast('Faturamento LP/LR salvo!')
+        this.apuracao.lpForm = { competencia:'', valor_receita:0, origem:'efd_contribuicoes' }
+        await this.carregarReceitasLP()
+      } catch(e) { this.showToast('Erro ao salvar faturamento', 'error') }
+    },
+
+    async excluirReceitaLP(competencia) {
+      if (!confirm(`Excluir faturamento LP/LR de ${competencia}?`)) return
+      try {
+        await fetch(`/api/receita-historica/${this.apuracao.clienteId}/${competencia}`, {
+          method: 'DELETE', headers: { Authorization: 'Bearer ' + this.token }
+        })
+        await this.carregarReceitasLP()
       } catch(e) { this.showToast('Erro ao excluir', 'error') }
     },
 
@@ -5119,12 +5281,32 @@ function app() {
     },
 
     async buscarFaturamentoLP(clienteId) {
-      const ano = new Date().getFullYear()
-      this.showToast('Buscando faturamento via e-CAC...')
+      const ano = this.apuracao.ano || new Date().getFullYear()
+      this.integracao.buscandoFaturamentoLP = true
+      this.integracao.avisoFaturamentoLP = ''
       try {
         const res = await this.api(`/api/integracoes/${clienteId}/buscar-faturamento-lp?ano=${ano}`, 'POST', {})
-        this.showToast(res.aviso || 'Busca concluída.')
-      } catch(e) { this.showToast(e.message || 'Erro ao buscar faturamento.', 'error') }
+        this.integracao.avisoFaturamentoLP = res.aviso || 'Busca concluída.'
+        if (res.receitas?.length) {
+          // Salva automaticamente as receitas encontradas com origem lp_efd_contribuicoes
+          for (const rec of res.receitas) {
+            await fetch(`/api/receita-historica/${clienteId}/${rec.competencia}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + this.token },
+              body: JSON.stringify({ valor_receita: rec.valor_receita, origem: 'lp_efd_contribuicoes' }),
+            })
+          }
+          await this.carregarReceitasLP()
+          this.showToast(`${res.receitas.length} competência(s) importadas do EFD Contribuições!`)
+        } else {
+          this.showToast(res.aviso || 'Nenhum dado encontrado.', 'warning')
+        }
+      } catch(e) {
+        this.integracao.avisoFaturamentoLP = e.message || 'Erro ao buscar faturamento.'
+        this.showToast(this.integracao.avisoFaturamentoLP, 'error')
+      } finally {
+        this.integracao.buscandoFaturamentoLP = false
+      }
     },
 
     async confirmarSenhaIntegracao() {

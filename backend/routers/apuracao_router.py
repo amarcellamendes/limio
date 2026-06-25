@@ -83,7 +83,7 @@ TABELAS_SIMPLES = {
 }
 
 DARF_CODIGOS = {
-    "pis":    {"codigo": "6912", "descricao": "PIS/Pasep — Retenção sobre serviços",             "venc": "dia 25 do mês seguinte"},
+    "pis":    {"codigo": "6912", "descricao": "PIS — Retenção sobre serviços",                   "venc": "dia 25 do mês seguinte"},
     "cofins": {"codigo": "5856", "descricao": "COFINS — Retenção sobre serviços",                "venc": "dia 25 do mês seguinte"},
     "inss":   {"codigo": "2240", "descricao": "INSS — Contribuição Retida (cessão mão de obra)", "venc": "dia 20 do mês seguinte"},
     "ir":     {"codigo": "0588", "descricao": "IRRF — Rendimentos do Trabalho / PJ",             "venc": "dia 20 do mês seguinte"},
