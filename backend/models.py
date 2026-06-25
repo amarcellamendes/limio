@@ -177,6 +177,7 @@ class Cliente(Base):
     nfe_ultimo_numero: Mapped[int] = mapped_column(Integer, default=0)
     nfe_certificado_path: Mapped[Optional[str]] = mapped_column(String(500))
     nfe_certificado_senha: Mapped[Optional[str]] = mapped_column(String(200))
+    ultimo_nsu_nfe: Mapped[Optional[str]] = mapped_column(String(20), default="0")
 
     # Configurações Boleto (opcional)
     boleto_ativo: Mapped[bool] = mapped_column(Boolean, default=False)

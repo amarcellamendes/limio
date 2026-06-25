@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from typing import Optional, List
 from datetime import datetime
+import os
 import xml.etree.ElementTree as ET
 import httpx
 
@@ -302,14 +303,115 @@ async def sincronizar_cliente(
         except Exception as e:
             raise HTTPException(502, f"Erro ao consultar NFe.io: {str(e)}")
 
-    # --- SEFAZ DF-e: requer certificado A1 (não disponível em MOCK_MODE)
+    # --- SEFAZ DF-e: usa certificado A1 quando disponível, mock caso contrário
     else:
-        from ..config import settings
-        if settings.MOCK_MODE:
-            # Simula importação de 3 notas demo
+        cert_path = cliente.nfe_certificado_path or cliente.nfse_certificado_path
+        cert_senha = cliente.nfe_certificado_senha or cliente.nfse_certificado_senha
+
+        if cert_path and cert_senha and os.path.isfile(cert_path):
+            # Consulta real à SEFAZ
+            from ..services.sefaz_dfe_service import consultar_dfe
+            from ..config import settings
+
+            uf = cliente.uf or "AM"
+            ultimo_nsu = cliente.ultimo_nsu_nfe or "0"
+            producao = not settings.MOCK_MODE
+
+            resultado = await consultar_dfe(
+                cnpj=cliente.cnpj,
+                uf=uf,
+                cert_path=cert_path,
+                cert_senha=cert_senha,
+                ultimo_nsu=ultimo_nsu,
+                producao=producao,
+            )
+
+            cstat = resultado.get("cstat", "")
+            # cstat 138 = sem novos documentos desde o último NSU
+            if cstat == "138":
+                return {
+                    "importados": 0,
+                    "mensagem": "Nenhum documento novo desde a última sincronização.",
+                    "ultimo_nsu": resultado.get("ultimo_nsu", ultimo_nsu),
+                }
+
+            if cstat not in ("137", "138"):
+                raise HTTPException(
+                    502,
+                    f"SEFAZ retornou cStat {cstat}: {resultado.get('xmotivo', '')}",
+                )
+
+            for doc in resultado.get("documentos", []):
+                campos = doc.get("campos", {})
+                if not campos or "tipo_evento" in campos:
+                    continue  # evento (cancelamento etc.) — ignora por ora
+
+                chave = campos.get("chave") or ""
+                if chave:
+                    dup = await db.execute(
+                        select(DocumentoRecebido.id).where(
+                            DocumentoRecebido.escritorio_id == escritorio.id,
+                            DocumentoRecebido.chave_acesso == chave,
+                        )
+                    )
+                    if dup.scalar_one_or_none():
+                        continue
+
+                tipo_str = campos.get("tipo", "nfe")
+                try:
+                    tipo_enum = TipoNotaEnum(tipo_str)
+                except ValueError:
+                    tipo_enum = TipoNotaEnum.nfe
+
+                novo = DocumentoRecebido(
+                    escritorio_id=escritorio.id,
+                    cliente_id=cliente_id,
+                    tipo=tipo_enum,
+                    origem="sefaz_dfe",
+                    chave_acesso=chave or None,
+                    numero=campos.get("numero"),
+                    serie=campos.get("serie"),
+                    data_emissao=campos.get("data_emissao"),
+                    emitente_cnpj=campos.get("emitente_cnpj"),
+                    emitente_razao_social=campos.get("emitente_razao_social"),
+                    emitente_uf=campos.get("emitente_uf"),
+                    emitente_municipio=campos.get("emitente_municipio"),
+                    valor_total=campos.get("valor_total"),
+                    natureza_operacao=campos.get("natureza_operacao"),
+                    status_manifestacao=campos.get("status_manifestacao", "pendente"),
+                    xml_content=campos.get("xml_content"),
+                )
+                db.add(novo)
+                await upsert_fornecedor(
+                    db, escritorio.id,
+                    cnpj=campos.get("emitente_cnpj") or "",
+                    razao_social=campos.get("emitente_razao_social") or "",
+                    uf=campos.get("emitente_uf"),
+                    municipio=campos.get("emitente_municipio"),
+                    valor_nota=campos.get("valor_total") or 0.0,
+                    data_nota=campos.get("data_emissao"),
+                )
+                importados += 1
+
+            # Salva o NSU mais recente para próxima consulta
+            novo_nsu = resultado.get("ultimo_nsu", ultimo_nsu)
+            if novo_nsu != ultimo_nsu:
+                cliente.ultimo_nsu_nfe = novo_nsu
+
+            await db.commit()
+            return {
+                "importados": importados,
+                "mensagem": f"{importados} documento(s) importado(s) via SEFAZ DF-e.",
+                "ultimo_nsu": novo_nsu,
+                "cstat": cstat,
+                "xmotivo": resultado.get("xmotivo", ""),
+            }
+
+        else:
+            # Sem certificado — fallback mock para demonstração
             import random
             for i in range(3):
-                chave = f"{''.join([str(random.randint(0,9)) for _ in range(44)])}"
+                chave = "".join([str(random.randint(0, 9)) for _ in range(44)])
                 novo = DocumentoRecebido(
                     escritorio_id=escritorio.id,
                     cliente_id=cliente_id,
@@ -342,14 +444,8 @@ async def sincronizar_cliente(
             return {
                 "importados": importados,
                 "mensagem": f"{importados} documentos importados (modo mock — dados de demonstração)",
-                "aviso": "Para sincronização real via SEFAZ DF-e, configure o certificado A1 do cliente.",
+                "aviso": "Configure o caminho do certificado A1 no cadastro do cliente para sincronizar com a SEFAZ.",
             }
-        else:
-            raise HTTPException(
-                501,
-                "Sincronização SEFAZ DF-e exige certificado A1. "
-                "Configure nfe_certificado_path e nfe_certificado_senha no cadastro do cliente."
-            )
 
     return {"importados": importados, "mensagem": f"{importados} documentos importados"}
 
