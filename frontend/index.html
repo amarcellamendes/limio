@@ -4172,9 +4172,7 @@ function app() {
           await this.carregarApuracao()
           this.showToast(`${d.receitas.length} competência(s) importada(s) do PGDAS-D!`)
         } else {
-          // PGDAS-D exige JS — abre o portal em nova aba para que o contador lance manualmente
-          this.showToast('Certificado aceito! O PGDAS-D exige navegação com JS. Abrindo portal em nova aba...', 'info')
-          setTimeout(() => window.open('https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATBHE/pgdas.app/emPGDAS/', '_blank'), 1200)
+          this.showToast(d.aviso || 'Nenhum dado encontrado no PGDAS-D para o ano selecionado.')
         }
       } catch(e) {
         const msg = e.message || ''

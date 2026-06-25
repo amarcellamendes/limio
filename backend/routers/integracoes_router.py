@@ -1,24 +1,17 @@
 """
 Integrações com Receita Federal (PGDAS-D) e eSocial via certificado A1.
 
-Fluxo:
-  1. Carrega o .pfx do cliente (já salvo em DATA_DIR/certs/...)
-  2. Extrai chave privada e certificado em PEM
-  3. Usa httpx com SSL client certificate para autenticação mTLS
-  4. Faz a requisição ao portal da Receita / eSocial
-  5. Parseia a resposta e retorna dados estruturados
+Estratégia:
+  - PGDAS-D: Playwright (Chromium headless) com client certificate — o portal usa JS
+  - eSocial: Playwright navegando no portal web.esocial.gov.br com client certificate
 
-Limitação: O portal do PGDAS-D e o eSocial exigem, além do mTLS,
-sessão web com cookies e/ou assinatura XML (para eSocial). O endpoint
-atual faz a conexão autenticada — se o portal retornar dados em HTML
-estático, o parser extrai o que conseguir; caso contrário, retorna
-status="conexao_ok" para que o contador preencha manualmente.
+O Chromium usa o certificado A1 diretamente (PEM) para autenticar nos portais,
+exatamente como o contador faria no browser, sem precisar de webservice especializado.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Optional
-import tempfile, os, ssl
+import tempfile, os, re
 
 from ..database import get_db
 from ..models import Cliente, Escritorio
@@ -28,10 +21,7 @@ from ..config import settings
 router = APIRouter(prefix="/api/integracoes", tags=["Integrações RF/eSocial"])
 
 
-# URLs dos portais da Receita Federal e eSocial
-_PGDAS_URL = "https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATBHE/pgdas.app/emPGDAS/"
-_ESOCIAL_URL = "https://webservices.consulta.esocial.gov.br/WsConsultaESocial/ServicoConsultaESocial.svc"
-
+# ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async def _carregar_certificado(cliente: Cliente, tipo: str, senha_override: str = ""):
     """Extrai PEM (cert + key) do .pfx do cliente. Retorna (cert_pem, key_pem, erro_str)."""
@@ -60,14 +50,184 @@ async def _carregar_certificado(cliente: Cliente, tipo: str, senha_override: str
     except Exception as e:
         msg = str(e).lower()
         if "mac" in msg or "password" in msg or "invalid" in msg or "decrypt" in msg:
-            dica = (
+            return None, None, (
                 f"Senha incorreta para o certificado {tipo.upper()}. "
                 "Corrija a senha no cadastro do cliente e tente novamente."
             )
-        else:
-            dica = f"Erro ao abrir certificado {tipo.upper()}: {str(e)}"
-        return None, None, dica
+        return None, None, f"Erro ao abrir certificado {tipo.upper()}: {str(e)}"
 
+
+async def _playwright_disponivel() -> bool:
+    try:
+        from playwright.async_api import async_playwright  # noqa
+        return True
+    except ImportError:
+        return False
+
+
+async def _run_playwright(cert_pem: bytes, key_pem: bytes, origem: str, tarefa_fn) -> dict:
+    """
+    Executa uma função de automação no Playwright com o certificado A1 configurado
+    para a origem informada (ex: 'https://www8.receita.fazenda.gov.br').
+
+    tarefa_fn recebe (page, context) e retorna o resultado.
+    """
+    from playwright.async_api import async_playwright
+
+    with tempfile.NamedTemporaryFile(suffix=".pem", delete=False, mode="wb") as cf:
+        cf.write(cert_pem); cert_path = cf.name
+    with tempfile.NamedTemporaryFile(suffix=".pem", delete=False, mode="wb") as kf:
+        kf.write(key_pem); key_path = kf.name
+
+    try:
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+            )
+            context = await browser.new_context(
+                client_certificates=[{
+                    "origin": origem,
+                    "certPath": cert_path,
+                    "keyPath": key_path,
+                }],
+                ignore_https_errors=True,  # ICP-Brasil CA não está no bundle padrão
+            )
+            page = await context.new_page()
+            try:
+                resultado = await tarefa_fn(page, context)
+            finally:
+                await context.close()
+                await browser.close()
+            return resultado
+    finally:
+        try: os.unlink(cert_path)
+        except: pass
+        try: os.unlink(key_path)
+        except: pass
+
+
+# ─── Tarefa PGDAS-D ───────────────────────────────────────────────────────────
+
+async def _tarefa_pgdas(page, context, cnpj: str, ano: int) -> dict:
+    """
+    Navega no portal do Simples Nacional e extrai receita bruta por competência.
+    """
+    cnpj_limpo = re.sub(r"\D", "", cnpj)
+
+    # 1. Acessa o portal de consulta do PGDAS-D
+    await page.goto(
+        "https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATBHE/pgdas.app/emPGDAS/",
+        wait_until="networkidle",
+        timeout=45000,
+    )
+
+    # 2. Se o portal pedir seleção de CNPJ (quando o cert tem múltiplos), seleciona o certo
+    try:
+        await page.wait_for_selector(f"text={cnpj_limpo[:8]}", timeout=5000)
+        cnpj_link = page.locator(f"[href*='{cnpj_limpo[:8]}'], [data-cnpj*='{cnpj_limpo[:8]}']").first
+        if await cnpj_link.count() > 0:
+            await cnpj_link.click()
+            await page.wait_for_load_state("networkidle", timeout=15000)
+    except Exception:
+        pass  # Provavelmente já está no contexto do CNPJ correto
+
+    # 3. Captura conteúdo para extração
+    html = await page.content()
+    receitas = _parse_pgdas_html(html, ano)
+
+    # 4. Se não achou na página inicial, tenta navegar para "Consulta de Competências Anteriores"
+    if not receitas:
+        try:
+            # Procura link de consulta/histórico
+            for selector in ["a:has-text('Consulta')", "a:has-text('Histórico')", "a:has-text('Anterior')", "a:has-text('Extrato')"]:
+                links = page.locator(selector)
+                if await links.count() > 0:
+                    await links.first.click()
+                    await page.wait_for_load_state("networkidle", timeout=15000)
+                    html = await page.content()
+                    receitas = _parse_pgdas_html(html, ano)
+                    if receitas:
+                        break
+        except Exception:
+            pass
+
+    return {
+        "receitas": receitas,
+        "aviso": (
+            "Dados extraídos com sucesso do PGDAS-D!" if receitas
+            else (
+                "Acesso ao PGDAS-D estabelecido, mas não foram encontrados dados "
+                f"de {ano} na página atual. O portal pode requerer navegação adicional."
+            )
+        ),
+    }
+
+
+# ─── Tarefa eSocial ───────────────────────────────────────────────────────────
+
+async def _tarefa_esocial(page, context, cnpj: str, ano: int) -> dict:
+    """
+    Navega no portal do eSocial e extrai totais de folha de pagamento.
+    """
+    cnpj_limpo = re.sub(r"\D", "", cnpj)
+
+    # 1. Acessa portal eSocial
+    await page.goto(
+        "https://login.esocial.gov.br/login.aspx",
+        wait_until="networkidle",
+        timeout=45000,
+    )
+
+    # 2. Seleciona "Certificado Digital" como método de login se houver botão
+    try:
+        cert_btn = page.locator("a:has-text('Certificado Digital'), button:has-text('Certificado'), input[value*='Certificado']").first
+        if await cert_btn.count() > 0:
+            await cert_btn.click()
+            await page.wait_for_load_state("networkidle", timeout=20000)
+    except Exception:
+        pass
+
+    # 3. Aguarda login completar (redireciona para o portal após cert auth)
+    await page.wait_for_load_state("networkidle", timeout=30000)
+
+    # 4. Tenta navegar para seção de folha/remuneração
+    folhas = []
+    try:
+        for selector in [
+            "a:has-text('Folha')", "a:has-text('Remuneração')",
+            "a:has-text('Relatório')", "a:has-text('Consulta')",
+        ]:
+            link = page.locator(selector).first
+            if await link.count() > 0:
+                await link.click()
+                await page.wait_for_load_state("networkidle", timeout=15000)
+                html = await page.content()
+                folhas = _parse_esocial_html(html, ano)
+                if folhas:
+                    break
+    except Exception:
+        pass
+
+    # 5. Se não achou via navegação, tenta extrair da página atual
+    if not folhas:
+        html = await page.content()
+        folhas = _parse_esocial_html(html, ano)
+
+    return {
+        "folhas": folhas,
+        "aviso": (
+            "Dados extraídos com sucesso do eSocial!" if folhas
+            else (
+                "Acesso ao eSocial estabelecido. Os totalizadores de folha (S-5011) "
+                "podem estar em outra seção do portal. Lance o valor manualmente ou "
+                "acesse o portal do eSocial para consultar."
+            )
+        ),
+    }
+
+
+# ─── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.post("/{cliente_id}/buscar-pgdas")
 async def buscar_pgdas(
@@ -78,8 +238,7 @@ async def buscar_pgdas(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Busca histórico de receita bruta no PGDAS-D usando o certificado A1 do cliente.
-    Retorna lista de competências com valor de receita, ou status de conexão.
+    Busca receita bruta no PGDAS-D usando Playwright com o certificado A1 do cliente.
     """
     result = await db.execute(
         select(Cliente).where(Cliente.id == cliente_id, Cliente.escritorio_id == escritorio.id)
@@ -88,64 +247,28 @@ async def buscar_pgdas(
     if not cliente:
         raise HTTPException(404, "Cliente não encontrado.")
 
-    # Tenta NFS-e primeiro, depois NF-e (ambos com senha_override se fornecida)
     cert_pem, key_pem, erro = await _carregar_certificado(cliente, "nfse", senha)
     if erro:
         cert_pem, key_pem, erro = await _carregar_certificado(cliente, "nfe", senha)
     if erro:
         raise HTTPException(400, erro)
 
+    if not await _playwright_disponivel():
+        raise HTTPException(503, "Módulo de automação não disponível. Contate o suporte.")
+
     try:
-        import httpx
-
-        # Grava certs em arquivos temporários para o SSL context do httpx
-        with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as cf:
-            cf.write(cert_pem)
-            cert_path = cf.name
-        with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as kf:
-            kf.write(key_pem)
-            key_path = kf.name
-
-        try:
-            async with httpx.AsyncClient(
-                cert=(cert_path, key_path),
-                verify=False,  # ICP-Brasil CA não está no bundle padrão do Linux
-                timeout=15,
-                follow_redirects=True,
-            ) as http:
-                resp = await http.get(
-                    _PGDAS_URL,
-                    params={"cnpj": cliente.cnpj.replace(".", "").replace("/", "").replace("-", ""), "ano": ano},
-                    headers={"User-Agent": "Mozilla/5.0 (Limio/1.0)"},
-                )
-
-            status_code = resp.status_code
-            body = resp.text
-
-            # Tenta extrair dados da resposta HTML
-            receitas = _parse_pgdas_html(body, ano)
-
-            return {
-                "status": "ok",
-                "status_http": status_code,
-                "receitas": receitas,
-                "aviso": (
-                    "Dados extraídos com sucesso." if receitas
-                    else "O certificado foi aceito pela Receita Federal, mas o portal do PGDAS-D "
-                         "exige JavaScript para exibir os dados e não pode ser lido automaticamente. "
-                         "Lance os valores manualmente ou acesse o portal PGDAS-D com seu certificado."
-                ),
-            }
-        finally:
-            os.unlink(cert_path)
-            os.unlink(key_path)
-
+        resultado = await _run_playwright(
+            cert_pem, key_pem,
+            "https://www8.receita.fazenda.gov.br",
+            lambda page, ctx: _tarefa_pgdas(page, ctx, cliente.cnpj, ano),
+        )
+        return {"status": "ok", **resultado}
     except Exception as e:
         msg = str(e)
-        if "SSL" in msg or "certificate" in msg.lower():
-            raise HTTPException(502, f"Erro de certificado SSL: {msg}")
-        if "ConnectError" in msg or "timeout" in msg.lower():
-            raise HTTPException(502, "Não foi possível conectar à Receita Federal. Tente novamente em alguns instantes.")
+        if "timeout" in msg.lower() or "Timeout" in msg:
+            raise HTTPException(504, "Tempo esgotado ao conectar ao portal da Receita Federal. Tente novamente.")
+        if "net::" in msg or "SSL" in msg:
+            raise HTTPException(502, f"Erro de conexão com a Receita Federal: {msg}")
         raise HTTPException(502, f"Erro ao acessar PGDAS-D: {msg}")
 
 
@@ -158,8 +281,7 @@ async def buscar_esocial(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Consulta eventos S-1200 (Remuneração) no eSocial via certificado A1.
-    Retorna valores de folha por competência, ou status de conexão.
+    Busca dados de folha no eSocial usando Playwright com o certificado A1 do cliente.
     """
     result = await db.execute(
         select(Cliente).where(Cliente.id == cliente_id, Cliente.escritorio_id == escritorio.id)
@@ -174,121 +296,76 @@ async def buscar_esocial(
     if erro:
         raise HTTPException(400, erro)
 
-    cnpj = cliente.cnpj.replace(".", "").replace("/", "").replace("-", "")
-
-    soap_body = f"""<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:v1="http://www.esocial.gov.br/servicos/consulta/loteeventos/empregador/pj/envio/v1_1_0">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <v1:ConsultarLoteEventos>
-      <v1:consulta>
-        <eSocial xmlns="http://www.esocial.gov.br/schema/lote/eventos/envio/v1_1_1">
-          <envioLoteEventos grupo="1">
-            <ideEmpregador>
-              <tpInsc>1</tpInsc>
-              <nrInsc>{cnpj[:8]}</nrInsc>
-            </ideEmpregador>
-            <ideTransmissor>
-              <tpInsc>1</tpInsc>
-              <nrInsc>{cnpj[:8]}</nrInsc>
-            </ideTransmissor>
-          </envioLoteEventos>
-        </eSocial>
-      </v1:consulta>
-    </v1:ConsultarLoteEventos>
-  </soapenv:Body>
-</soapenv:Envelope>"""
+    if not await _playwright_disponivel():
+        raise HTTPException(503, "Módulo de automação não disponível. Contate o suporte.")
 
     try:
-        import httpx
-
-        with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as cf:
-            cf.write(cert_pem)
-            cert_path = cf.name
-        with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as kf:
-            kf.write(key_pem)
-            key_path = kf.name
-
-        try:
-            async with httpx.AsyncClient(
-                cert=(cert_path, key_path),
-                verify=False,  # ICP-Brasil CA não está no bundle padrão do Linux
-                timeout=20,
-            ) as http:
-                resp = await http.post(
-                    _ESOCIAL_URL,
-                    content=soap_body.encode("utf-8"),
-                    headers={
-                        "Content-Type": "text/xml; charset=utf-8",
-                        "SOAPAction": "ConsultarLoteEventos",
-                    },
-                )
-
-            folhas = _parse_esocial_soap(resp.text, ano)
-            return {
-                "status": "ok",
-                "status_http": resp.status_code,
-                "folhas": folhas,
-                "aviso": (
-                    "Dados extraídos com sucesso." if folhas
-                    else "Conexão com eSocial estabelecida. O webservice pode exigir assinatura XML (xmldsig) "
-                         "para retornar eventos — recurso em desenvolvimento. "
-                         "Lance os valores manualmente pelo portal do eSocial."
-                ),
-            }
-        finally:
-            os.unlink(cert_path)
-            os.unlink(key_path)
-
+        resultado = await _run_playwright(
+            cert_pem, key_pem,
+            "https://login.esocial.gov.br",
+            lambda page, ctx: _tarefa_esocial(page, ctx, cliente.cnpj, ano),
+        )
+        return {"status": "ok", **resultado}
     except Exception as e:
         msg = str(e)
-        if "ConnectError" in msg or "timeout" in msg.lower():
-            raise HTTPException(502, "Não foi possível conectar ao eSocial. Verifique a conexão.")
+        if "timeout" in msg.lower():
+            raise HTTPException(504, "Tempo esgotado ao conectar ao eSocial. Tente novamente.")
         raise HTTPException(502, f"Erro ao acessar eSocial: {msg}")
 
 
 # ─── Parsers de resposta ───────────────────────────────────────────────────────
 
 def _parse_pgdas_html(html: str, ano: int) -> list:
-    """Tenta extrair competência + receita bruta da página HTML do PGDAS-D."""
-    import re
+    """Extrai competência + receita bruta da página HTML do PGDAS-D."""
     resultados = []
-    # Padrão típico: "01/2025" seguido de valor monetário "R$ 12.345,67"
-    pattern = re.compile(
-        r'(\d{2}/\d{4})[^<]*?R\$\s*([\d.,]+)',
-        re.DOTALL,
-    )
-    for m in pattern.finditer(html):
-        comp = m.group(1)  # MM/YYYY
-        val_str = m.group(2).replace(".", "").replace(",", ".")
-        try:
-            comp_ano = int(comp.split("/")[1])
-            if comp_ano == ano:
-                resultados.append({
-                    "competencia": f"{comp.split('/')[1]}-{comp.split('/')[0]}",
-                    "valor_receita": float(val_str),
-                    "origem": "pgdas_d",
-                })
-        except Exception:
-            pass
+    # Padrão: "01/2025" ou "2025-01" seguido de valor monetário "R$ 12.345,67"
+    patterns = [
+        re.compile(r'(\d{2}/\d{4})[^<]*?R\$\s*([\d.,]+)', re.DOTALL),
+        re.compile(r'(\d{4}-\d{2})[^<]*?R\$\s*([\d.,]+)', re.DOTALL),
+    ]
+    for pattern in patterns:
+        for m in pattern.finditer(html):
+            comp_raw = m.group(1)
+            val_str = m.group(2).replace(".", "").replace(",", ".")
+            try:
+                if "/" in comp_raw:
+                    mes, comp_ano = comp_raw.split("/")
+                else:
+                    comp_ano, mes = comp_raw.split("-")
+                if int(comp_ano) == ano:
+                    comp = f"{comp_ano}-{mes.zfill(2)}"
+                    if not any(r["competencia"] == comp for r in resultados):
+                        resultados.append({
+                            "competencia": comp,
+                            "valor_receita": float(val_str),
+                            "origem": "pgdas_d",
+                        })
+            except Exception:
+                pass
     return resultados
 
 
-def _parse_esocial_soap(xml: str, ano: int) -> list:
-    """Tenta extrair valores de remuneração da resposta SOAP do eSocial."""
-    import re
+def _parse_esocial_html(html: str, ano: int) -> list:
+    """Extrai valores de folha da página HTML do eSocial."""
     resultados = []
-    # Busca tags de remuneração no XML de retorno
-    comp_pat = re.compile(r'<perApur>(\d{4}-\d{2})</perApur>')
-    vr_pat   = re.compile(r'<vrTotal>([\d.]+)</vrTotal>')
-    comps = comp_pat.findall(xml)
-    vrs   = vr_pat.findall(xml)
-    for comp, vr in zip(comps, vrs):
-        if str(ano) in comp:
-            resultados.append({
-                "competencia": comp,
-                "valor_total_folha": float(vr),
-                "origem": "esocial",
-            })
+    # Busca por padrões de competência + valor total
+    pattern = re.compile(r'(\d{2}/\d{4}|\d{4}-\d{2})[^<]*?R\$\s*([\d.,]+)', re.DOTALL)
+    for m in pattern.finditer(html):
+        comp_raw = m.group(1)
+        val_str = m.group(2).replace(".", "").replace(",", ".")
+        try:
+            if "/" in comp_raw:
+                mes, comp_ano = comp_raw.split("/")
+            else:
+                comp_ano, mes = comp_raw.split("-")
+            if int(comp_ano) == ano:
+                comp = f"{comp_ano}-{mes.zfill(2)}"
+                if not any(r["competencia"] == comp for r in resultados):
+                    resultados.append({
+                        "competencia": comp,
+                        "valor_total_folha": float(val_str),
+                        "origem": "esocial",
+                    })
+        except Exception:
+            pass
     return resultados
