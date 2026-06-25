@@ -199,6 +199,35 @@ async def buscar_lote(
 
 # ─── Certidões automáticas ────────────────────────────────────────────────────
 
+@router.post("/certidao-preview")
+async def preview_certidao(
+    payload: dict,
+    escritorio: Escritorio = Depends(get_escritorio_atual),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Consulta automática SEM salvar — retorna status, validade e número para preencher o modal.
+    Payload: { "cliente_id": 3, "tipo": "cnd_federal" }
+    """
+    cliente_id = payload.get("cliente_id")
+    tipo = payload.get("tipo", "")
+    if not cliente_id or not tipo:
+        raise HTTPException(400, "cliente_id e tipo são obrigatórios.")
+
+    cliente_r = await db.execute(select(Cliente).where(
+        Cliente.id == cliente_id, Cliente.escritorio_id == escritorio.id))
+    cliente = cliente_r.scalar_one_or_none()
+    if not cliente:
+        raise HTTPException(404, "Cliente não encontrado.")
+
+    cnpj = re.sub(r"\D", "", cliente.cnpj or "")
+    if len(cnpj) != 14:
+        raise HTTPException(400, "CNPJ do cliente inválido.")
+
+    uf = (cliente.uf or "AM").upper()
+    return await _executar_consulta_certidao(tipo, cnpj, uf, cliente)
+
+
 @router.post("/certidao-consultar")
 async def consultar_certidao_auto(
     payload: dict,
@@ -234,24 +263,9 @@ async def consultar_certidao_auto(
     uf = (cliente.uf or "AM").upper()
 
     try:
-        if cert.tipo == "cnd_federal":
-            res = await _consultar_cnd_federal(cnpj)
-        elif cert.tipo == "cnd_fgts":
-            res = await _consultar_cnd_fgts(cnpj)
-        elif cert.tipo == "cndt_tst":
-            res = await _consultar_cndt_tst(cnpj)
-        elif cert.tipo == "cndt_trt":
-            res = await _consultar_cndt_trt(cnpj, uf)
-        elif cert.tipo in ("cnd_estadual", "cnd_estadual_nc"):
-            res = await _consultar_cnd_estadual(cnpj, uf, cert.tipo)
-        elif cert.tipo == "cnd_municipal":
-            res = await _consultar_cnd_municipal(cnpj, cliente.municipio or "", uf)
-        elif cert.tipo == "cnd_falencia":
-            res = await _consultar_cnd_falencia(cnpj)
-        else:
-            raise HTTPException(400, f"Tipo '{cert.tipo}' ainda não suportado para consulta automática.")
+        res = await _executar_consulta_certidao(cert.tipo, cnpj, uf, cliente)
 
-        # Atualiza certidão
+        # Atualiza certidão com os dados retornados
         cert.data_consulta = datetime.utcnow()
         cert.status = res.get("status", cert.status)
         if res.get("data_validade"):
@@ -268,6 +282,25 @@ async def consultar_certidao_auto(
         raise
     except Exception as e:
         raise HTTPException(502, f"Erro na consulta automática: {e}")
+
+
+async def _executar_consulta_certidao(tipo: str, cnpj: str, uf: str, cliente: Cliente) -> dict:
+    """Despacha a consulta para o órgão correto. Usado por preview e por certidao-consultar."""
+    if tipo == "cnd_federal":
+        return await _consultar_cnd_federal(cnpj)
+    if tipo == "cnd_fgts":
+        return await _consultar_cnd_fgts(cnpj)
+    if tipo == "cndt_tst":
+        return await _consultar_cndt_tst(cnpj)
+    if tipo == "cndt_trt":
+        return await _consultar_cndt_trt(cnpj, uf)
+    if tipo in ("cnd_estadual", "cnd_estadual_nc"):
+        return await _consultar_cnd_estadual(cnpj, uf, tipo)
+    if tipo == "cnd_municipal":
+        return await _consultar_cnd_municipal(cnpj, cliente.municipio or "", uf)
+    if tipo == "cnd_falencia":
+        return await _consultar_cnd_falencia(cnpj)
+    raise HTTPException(400, f"Tipo '{tipo}' ainda não suportado para consulta automática.")
 
 
 # ─── Helpers genéricos ────────────────────────────────────────────────────────
