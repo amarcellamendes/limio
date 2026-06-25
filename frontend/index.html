@@ -1782,7 +1782,21 @@
               <option :value="c.id" x-text="c.razao_social"></option>
             </template>
           </select>
-          <button @click="abrirCertidaoModal(null)" class="btn-primary">+ Nova Certidão</button>
+          <div class="flex gap-2">
+            <button @click="consultarCertidoesEmLote()" :disabled="certidoes.buscandoLote"
+                    class="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold border border-primary text-primary hover:bg-primary/5 disabled:opacity-40 transition">
+              <template x-if="!certidoes.buscandoLote"><span>🔄 Atualizar Tudo em Lote</span></template>
+              <template x-if="certidoes.buscandoLote">
+                <span class="flex items-center gap-2">
+                  <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                  </svg>Consultando...
+                </span>
+              </template>
+            </button>
+            <button @click="abrirCertidaoModal(null)" class="btn-primary">+ Nova Certidão</button>
+          </div>
         </div>
       </div>
 
@@ -1955,15 +1969,17 @@
               <label class="label">Observação</label>
               <textarea x-model="certidoes.form.observacao" class="input h-16 resize-none" placeholder="Anotações sobre esta certidão..."></textarea>
             </div>
-            <div class="col-span-2 flex gap-4">
+            <div class="col-span-2 flex flex-wrap gap-4">
               <label class="flex items-center gap-2 text-sm cursor-pointer">
                 <input type="checkbox" x-model="certidoes.form.enviar_email" class="w-4 h-4 accent-accent" />
                 Enviar ao e-mail do cliente ao obter
               </label>
             </div>
-            <div class="col-span-2" x-show="certidoes.form.enviar_email || certidoes.form.pasta_destino">
-              <label class="label">Salvar em pasta (caminho)</label>
-              <input type="text" x-model="certidoes.form.pasta_destino" class="input" placeholder="/certidoes/clientes/" />
+            <div class="col-span-2">
+              <label class="label">Salvar em pasta (opcional)</label>
+              <input type="text" x-model="certidoes.form.pasta_destino" class="input"
+                     placeholder="Ex: /data/certidoes/clientes/ ou deixe em branco" />
+              <p class="text-xs text-gray-400 mt-1">Pasta no servidor onde o arquivo PDF será salvo ao ser obtido automaticamente.</p>
             </div>
           </div>
           <div x-show="certidoes.modalErro" class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3" x-text="certidoes.modalErro"></div>
@@ -3241,7 +3257,7 @@ function app() {
     integracao: { buscandoPgdas: false, buscandoEsocial: false, buscandoLote: false, modalSenha: false, senhaTemp: '', acaoAposSenha: null },
     certidoes: {
       lista: [], vencendo: [], filtroCliente: '', modalShow: false, modalEditando: false, modalId: null, modalErro: '',
-      consultandoAuto: false, autoResultado: null,
+      consultandoAuto: false, autoResultado: null, buscandoLote: false,
       portalInfo: { nome: '', url: '' },
       form: { cliente_id: '', tipo: '', status: 'pendente', nome_descritivo: '', numero_certidao: '', data_consulta: '', data_validade: '', data_agendamento: '', observacao: '', enviar_email: false, pasta_destino: '' },
       tiposNomes: {
@@ -4683,6 +4699,20 @@ function app() {
         return ''
       }
       return portais[cert.tipo]?.url || ''
+    },
+
+    async consultarCertidoesEmLote() {
+      this.certidoes.buscandoLote = true
+      try {
+        const payload = this.certidoes.filtroCliente ? { cliente_id: Number(this.certidoes.filtroCliente) } : {}
+        const res = await this.api('/api/certidoes/consultar-lote', 'POST', payload)
+        this.showToast(`Lote concluído: ${res.atualizadas} certidão(ões) atualizada(s)${res.erros > 0 ? `, ${res.erros} erro(s)` : ''}.`, res.erros > 0 ? 'warn' : 'ok')
+        await this.carregarCertidoes()
+      } catch(e) {
+        this.showToast('Erro na consulta em lote: ' + (e.message || e), 'error')
+      } finally {
+        this.certidoes.buscandoLote = false
+      }
     },
 
     async consultarCertidaoNoModal() {

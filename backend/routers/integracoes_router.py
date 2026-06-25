@@ -300,7 +300,7 @@ async def _executar_consulta_certidao(tipo: str, cnpj: str, uf: str, cliente: Cl
     if tipo == "cnd_municipal":
         return await _consultar_cnd_municipal(cnpj, cliente.municipio or "", uf)
     if tipo == "cnd_falencia":
-        return await _consultar_cnd_falencia(cnpj)
+        return await _consultar_cnd_falencia(cnpj, uf)
     raise HTTPException(400, f"Tipo '{tipo}' ainda não suportado para consulta automática.")
 
 
@@ -1106,16 +1106,55 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
     return _parse_certidao_html(html, "cnd_municipal")
 
 
-async def _consultar_cnd_falencia(cnpj: str) -> dict:
-    """Certidão de Falência — consulta pública nas Juntas Comerciais."""
-    return {
-        "status": "em_analise",
-        "observacao": (
-            "A certidão de falência é emitida pela Junta Comercial de cada estado. "
-            "Não há endpoint público unificado. Consulte manualmente: "
-            "https://www.governodigital.gov.br/junta-comercial"
-        ),
+async def _consultar_cnd_falencia(cnpj: str, uf: str = "AM") -> dict:
+    """Certidão de Falência/Recuperação Judicial — emitida pelos Tribunais de Justiça estaduais."""
+    import httpx
+
+    _TJ_URLS = {
+        "AM": "https://www.tjam.jus.br/index.php?option=com_content&view=article&id=3038&Itemid=392",
+        "SP": "https://esaj.tjsp.jus.br/sco/abrirCadastro.do",
+        "RJ": "https://certidaodigital.tjrj.jus.br/certidaodigital/",
+        "MG": "https://www4.tjmg.jus.br/juridico/sf/certidao.jsp",
+        "RS": "https://www.tjrs.jus.br/site/processos/certidoes/",
+        "PR": "https://projudi.tjpr.jus.br/projudi/",
+        "SC": "https://www.tjsc.jus.br/web/guest/consulta-certidoes",
+        "BA": "https://www.tjba.jus.br/portal/certidao",
+        "CE": "https://esaj.tjce.jus.br/sco/abrirCadastro.do",
+        "PE": "https://www.tjpe.jus.br/web/guest/servicos/certidoes",
+        "GO": "https://projudi.tjgo.jus.br/BuscaCertidao",
+        "MT": "https://www.tjmt.jus.br/servicos/certidoes",
+        "MS": "https://www.tjms.jus.br/servicos/certidao",
+        "PA": "https://www.tjpa.jus.br/portalExterno/iniciarProcesso",
     }
+    uf_upper = uf.upper()
+    url = _TJ_URLS.get(uf_upper, "")
+
+    if not url:
+        return {
+            "status": "em_analise",
+            "observacao": (
+                f"A certidão de falência é emitida pelo TJ{uf_upper} (Tribunal de Justiça). "
+                f"Consulte manualmente em www.tj{uf.lower()}.jus.br"
+            ),
+        }
+
+    headers = {"User-Agent": "Mozilla/5.0 Chrome/125.0.0.0"}
+    async with httpx.AsyncClient(verify=False, timeout=30, follow_redirects=True) as c:
+        try:
+            r = await c.get(url, headers=headers)
+            html = r.text
+            # Tenta POST com CNPJ
+            r2 = await c.post(url, data={"cnpj": cnpj, "numeroCNPJ": cnpj}, headers=headers)
+            html = r2.text
+        except Exception:
+            html = ""
+
+    result = _parse_certidao_html(html, "cnd_falencia")
+    if result.get("status") == "pendente":
+        result["observacao"] = (
+            f"TJ{uf_upper} consultado. Se não houver dados automáticos, acesse: {url}"
+        )
+    return result
 
 
 # ─── Parsers ─────────────────────────────────────────────────────────────────
@@ -1358,42 +1397,63 @@ def _parse_certidao_html(html: str, tipo: str) -> dict:
 
     # Determina status
     if any(k in html_up for k in ["NEGATIVA COM EFEITO DE POSITIVA", "POSITIVA COM EFEITO DE NEGATIVA"]):
-        status = "regular"  # juridicamente tem efeito de negativa
-    elif any(k in html_up for k in ["NEGATIVA", "REGULAR", "REGULARIDADE"]):
         status = "regular"
-    elif any(k in html_up for k in ["POSITIVA", "DÉBITOS", "IRREGUL", "PENDÊNCIA", "DEVEDOR"]):
+    elif any(k in html_up for k in ["CERTIDÃO NEGATIVA", "NEGATIVA DE DÉBITO", "NADA CONSTA",
+                                     "SEM DÉBITO", "REGULARIDADE FISCAL", "SITUAÇÃO REGULAR"]):
+        status = "regular"
+    elif any(k in html_up for k in ["NEGATIVA", "REGULAR"]) and not any(
+            k in html_up for k in ["POSITIVA", "IRREGULAR", "DÉBITO", "PENDÊNCIA"]):
+        status = "regular"
+    elif any(k in html_up for k in ["POSITIVA", "DÉBITOS", "IRREGUL", "PENDÊNCIA", "DEVEDOR",
+                                     "EM ABERTO", "NÃO REGULAR"]):
         status = "irregular"
-    elif any(k in html_up for k in ["PROCESSANDO", "AGUARDANDO", "ANÁLISE"]):
+    elif any(k in html_up for k in ["PROCESSANDO", "AGUARDANDO", "ANÁLISE", "EM PROCESSAMENTO"]):
         status = "em_analise"
     else:
         status = "pendente"
 
-    # Extrai data de validade
+    # Extrai data de validade — prioriza padrões específicos e datas futuras
+    hoje = date.today()
     data_validade = None
+    candidatas: list[date] = []
+
+    # Padrões prioritários (contexto de validade)
     for pat in [
-        r'v[aá]lid[ao]\s+at[eé]\s+(\d{2}/\d{2}/\d{4})',
-        r'validade[:\s]+(\d{2}/\d{2}/\d{4})',
-        r'expira[:\s]+(\d{2}/\d{2}/\d{4})',
-        r'(\d{2}/\d{2}/\d{4})',  # último recurso: primeira data no documento
+        r'v[aá]lid[ao]\s+(?:at[eé]|até)\s*:?\s*(\d{2}/\d{2}/\d{4})',
+        r'validade\s*:?\s*(\d{2}/\d{2}/\d{4})',
+        r'expira\s+em\s*:?\s*(\d{2}/\d{2}/\d{4})',
+        r'prazo\s+de\s+validade\s*:?\s*(\d{2}/\d{2}/\d{4})',
+        r'data\s+de\s+validade\s*:?\s*(\d{2}/\d{2}/\d{4})',
     ]:
-        m = re.search(pat, html, re.IGNORECASE)
-        if m:
+        for m in re.finditer(pat, html, re.IGNORECASE):
             try:
-                data_validade = datetime.strptime(m.group(1), "%d/%m/%Y").date()
-                break
+                candidatas.append(datetime.strptime(m.group(1), "%d/%m/%Y").date())
             except ValueError:
                 pass
 
-    # Extrai número da certidão
+    # Prioriza datas futuras; se não houver, usa a mais recente
+    futuras = [d for d in candidatas if d > hoje]
+    if futuras:
+        data_validade = min(futuras)
+    elif candidatas:
+        data_validade = max(candidatas)
+
+    # Extrai número da certidão — exclui caminhos de arquivo, hashes e referências JS
+    _EXTENSOES = ('.js', '.css', '.html', '.htm', '.php', '.asp', '.json', '.png', '.jpg')
     numero = None
     for pat in [
-        r'n[uú]mero\s*:?\s*([A-Z0-9\-/.]{5,30})',
-        r'n[oº°]\s*:?\s*([A-Z0-9\-/.]{5,30})',
-        r'certid[aã]o\s+n[oº°]?\s*:?\s*([A-Z0-9\-/.]{5,30})',
+        r'n[uú]mero\s*(?:da\s+certid[aã]o)?\s*:?\s*([A-Z0-9][A-Z0-9\-/.]{4,39})',
+        r'certid[aã]o\s+n[oº°]?\s*:?\s*([A-Z0-9][A-Z0-9\-/.]{4,39})',
+        r'c[oó]digo\s+(?:de\s+controle|de\s+verifica[cç][aã]o)\s*:?\s*([A-Z0-9\-]{6,30})',
+        r'protocolo\s*:?\s*([A-Z0-9\-]{6,30})',
     ]:
-        m = re.search(pat, html, re.IGNORECASE)
-        if m:
-            numero = m.group(1).strip()
+        for m in re.finditer(pat, html, re.IGNORECASE):
+            n = m.group(1).strip().rstrip('.')
+            if not any(n.lower().endswith(ext) for ext in _EXTENSOES):
+                if not re.search(r'[a-f0-9]{8}-[a-f0-9]{4}', n.lower()):  # não é UUID
+                    numero = n
+                    break
+        if numero:
             break
 
     return {

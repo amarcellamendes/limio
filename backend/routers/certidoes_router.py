@@ -456,3 +456,57 @@ async def certidoes_vencendo(
 
     result = await db.execute(stmt)
     return result.scalars().all()
+
+
+@router.post("/consultar-lote")
+async def consultar_lote(
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    escritorio: Escritorio = Depends(get_escritorio_atual),
+):
+    """
+    Consulta automática em lote: itera todas as certidões cadastradas (ou de um cliente)
+    e atualiza status, validade e número via automação.
+
+    Payload opcional: { "cliente_id": 3 } para filtrar por cliente.
+    """
+    from ..routers.integracoes_router import _executar_consulta_certidao
+
+    cliente_id = payload.get("cliente_id")
+    stmt = select(Certidao).where(Certidao.escritorio_id == escritorio.id)
+    if cliente_id:
+        stmt = stmt.where(Certidao.cliente_id == cliente_id)
+    result = await db.execute(stmt)
+    certidoes = result.scalars().all()
+
+    atualizadas, erros = [], []
+    for cert in certidoes:
+        cli_r = await db.execute(select(Cliente).where(Cliente.id == cert.cliente_id))
+        cliente = cli_r.scalar_one_or_none()
+        if not cliente:
+            continue
+        cnpj = cliente.cnpj or ""
+        uf = (cliente.uf or "AM").upper()
+        try:
+            res = await _executar_consulta_certidao(cert.tipo, cnpj, uf, cliente)
+            if res.get("status") and res["status"] != "pendente":
+                cert.status = res["status"]
+            if res.get("data_validade"):
+                cert.data_validade = res["data_validade"]
+            if res.get("numero_certidao"):
+                cert.numero_certidao = res["numero_certidao"]
+            if res.get("observacao"):
+                cert.observacao = res["observacao"]
+            cert.data_consulta = datetime.utcnow()
+            atualizadas.append({"id": cert.id, "tipo": cert.tipo, "status": cert.status})
+        except Exception as e:
+            erros.append({"id": cert.id, "tipo": cert.tipo, "erro": str(e)})
+
+    await db.commit()
+    return {
+        "total": len(certidoes),
+        "atualizadas": len(atualizadas),
+        "erros": len(erros),
+        "detalhe": atualizadas,
+        "detalhe_erros": erros,
+    }
