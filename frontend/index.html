@@ -3506,6 +3506,7 @@ function app() {
       this.modalCliente.erro = ''
       this.pendingCerts = { nfse: null, nfe: null }
       this.pendingCertNames = { nfse: '', nfe: '' }
+      this.integracao.modalSenha = false
       if (c) {
         this.modalCliente.editando = true; this.modalCliente.id = c.id
         this.clienteForm = {
@@ -4171,11 +4172,14 @@ function app() {
           await this.carregarApuracao()
           this.showToast(`${d.receitas.length} competência(s) importada(s) do PGDAS-D!`)
         } else {
-          this.showToast(d.aviso || 'Nenhum dado retornado. Lance manualmente.')
+          // PGDAS-D exige JS — abre o portal em nova aba para que o contador lance manualmente
+          this.showToast('Certificado aceito! O PGDAS-D exige navegação com JS. Abrindo portal em nova aba...', 'info')
+          setTimeout(() => window.open('https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATBHE/pgdas.app/emPGDAS/', '_blank'), 1200)
         }
       } catch(e) {
         const msg = e.message || ''
-        if (msg.includes('Senha incorreta') || msg.includes('não encontrado') || msg.includes('senha')) {
+        const isSenhaErrada = msg.includes('Senha incorreta')
+        if (!senhaForce && isSenhaErrada) {
           this.integracao.acaoAposSenha = 'pgdas'
           this.integracao.senhaTemp = ''
           this.integracao.modalSenha = true
@@ -4209,7 +4213,8 @@ function app() {
         }
       } catch(e) {
         const msg = e.message || ''
-        if (msg.includes('Senha incorreta') || msg.includes('não encontrado') || msg.includes('senha')) {
+        const isSenhaErrada = msg.includes('Senha incorreta')
+        if (!senhaForce && isSenhaErrada) {
           this.integracao.acaoAposSenha = 'esocial'
           this.integracao.senhaTemp = ''
           this.integracao.modalSenha = true

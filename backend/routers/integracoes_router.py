@@ -109,7 +109,7 @@ async def buscar_pgdas(
         try:
             async with httpx.AsyncClient(
                 cert=(cert_path, key_path),
-                verify=True,
+                verify=False,  # ICP-Brasil CA não está no bundle padrão do Linux
                 timeout=15,
                 follow_redirects=True,
             ) as http:
@@ -131,9 +131,9 @@ async def buscar_pgdas(
                 "receitas": receitas,
                 "aviso": (
                     "Dados extraídos com sucesso." if receitas
-                    else "Conexão estabelecida com a Receita Federal, mas o portal retornou página sem dados tabulares. "
-                         "Isso pode ocorrer porque o portal exige navegação com JavaScript. "
-                         "Lance os valores manualmente usando o extrato do PGDAS-D."
+                    else "O certificado foi aceito pela Receita Federal, mas o portal do PGDAS-D "
+                         "exige JavaScript para exibir os dados e não pode ser lido automaticamente. "
+                         "Lance os valores manualmente ou acesse o portal PGDAS-D com seu certificado."
                 ),
             }
         finally:
@@ -213,7 +213,7 @@ async def buscar_esocial(
         try:
             async with httpx.AsyncClient(
                 cert=(cert_path, key_path),
-                verify=True,
+                verify=False,  # ICP-Brasil CA não está no bundle padrão do Linux
                 timeout=20,
             ) as http:
                 resp = await http.post(
