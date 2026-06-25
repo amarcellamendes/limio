@@ -113,9 +113,10 @@ async def buscar_faturamento_lp(
         raise HTTPException(503, "Módulo de automação não disponível.")
 
     try:
-        resultado = await _run_playwright(
+        # Registra cert para ambos os domínios (e-CAC + DCTFWeb)
+        resultado = await _run_playwright_multi(
             cert_pem, key_pem,
-            "https://cav.receita.fazenda.gov.br",
+            ["https://cav.receita.fazenda.gov.br", "https://dctfweb.receita.fazenda.gov.br"],
             lambda p, c: _tarefa_ecac_faturamento(p, c, cliente.cnpj, ano),
         )
         for rec in resultado.get("receitas", []):
@@ -321,6 +322,46 @@ async def _playwright_ok() -> bool:
         return True
     except ImportError:
         return False
+
+
+async def _run_playwright_multi(cert_pem: bytes, key_pem: bytes, origins: list[str], tarefa_fn) -> dict:
+    """Igual a _run_playwright mas registra o certificado em múltiplas origens."""
+    from playwright.async_api import async_playwright
+
+    with tempfile.NamedTemporaryFile(suffix=".pem", delete=False, mode="wb") as cf:
+        cf.write(cert_pem); cert_path = cf.name
+    with tempfile.NamedTemporaryFile(suffix=".pem", delete=False, mode="wb") as kf:
+        kf.write(key_pem); key_path = kf.name
+
+    try:
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+                      "--disable-blink-features=AutomationControlled"],
+            )
+            certs = [{"origin": o, "certPath": cert_path, "keyPath": key_path} for o in origins]
+            context = await browser.new_context(
+                client_certificates=certs,
+                ignore_https_errors=True,
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/125.0.0.0 Safari/537.36"
+                ),
+            )
+            page = await context.new_page()
+            try:
+                return await tarefa_fn(page, context)
+            finally:
+                await context.close()
+                await browser.close()
+    finally:
+        for p in (cert_path, key_path):
+            try:
+                os.unlink(p)
+            except Exception:
+                pass
 
 
 async def _run_playwright(cert_pem: bytes, key_pem: bytes, origin: str, tarefa_fn) -> dict:
@@ -663,13 +704,17 @@ async def _tentar_api_esocial(page, context, cnpj: str, ano: int) -> list:
 
 async def _tarefa_ecac_faturamento(page, context, cnpj: str, ano: int) -> dict:
     """
-    Tenta extrair faturamento de empresas LP/LR via e-CAC (portal da Receita Federal).
-    Navega para Consulta de Escrituração / DCTF para estimar receita bruta.
+    Extrai faturamento de empresas LP/LR via DCTFWeb → MIT (Módulo de Informações Tributárias).
+
+    Fluxo:
+      e-CAC (cav.receita.fazenda.gov.br) → DCTFWeb → aba MIT → seleciona período → extrai receita bruta
     """
     cnpj_limpo = re.sub(r"\D", "", cnpj)
     receitas: list[dict] = []
 
-    # e-CAC login com certificado
+    # ── 1. Entra no e-CAC com certificado ────────────────────────────────────
+    # O Playwright já tem o cert configurado para cav.receita.fazenda.gov.br.
+    # A URL pública de entrada é o login do e-CAC; com cert o browser autentica automaticamente.
     await page.goto(
         "https://cav.receita.fazenda.gov.br/autenticacao/login",
         wait_until="domcontentloaded",
@@ -677,8 +722,13 @@ async def _tarefa_ecac_faturamento(page, context, cnpj: str, ano: int) -> dict:
     )
     await page.wait_for_timeout(3000)
 
-    # Clica em "Certificado Digital" se aparecer opção
-    for sel in ["a:has-text('Certificado')", "button:has-text('Certificado')", ".btn-certificado"]:
+    # Se aparecer seleção de tipo de acesso, escolhe "Certificado Digital"
+    for sel in [
+        "a:has-text('Certificado Digital')",
+        "button:has-text('Certificado Digital')",
+        "input[value*='ertificado']",
+        "#btnCertificado",
+    ]:
         try:
             el = page.locator(sel).first
             if await el.count() > 0:
@@ -689,38 +739,138 @@ async def _tarefa_ecac_faturamento(page, context, cnpj: str, ano: int) -> dict:
         except Exception:
             pass
 
-    # Tenta navegar para "Declarações" > "DCTF" ou "Consulta de Receita"
-    nav_opts = [
-        ["a:has-text('Declarações')", "a:has-text('DCTF')"],
-        ["a:has-text('Escrituração Contábil')", "a:has-text('ECF')"],
-        ["a:has-text('Consultar Declarações')"],
-    ]
-    for path in nav_opts:
+    # ── 2. Navega ao DCTFWeb ──────────────────────────────────────────────────
+    # Tenta URL direta primeiro; se falhar, navega pelo menu do e-CAC.
+    dctfweb_acessado = False
+    for dctf_url in [
+        "https://dctfweb.receita.fazenda.gov.br/dctfweb/",
+        "https://dctfweb.receita.fazenda.gov.br/",
+    ]:
         try:
-            for step in path:
-                el = page.locator(step).first
-                if await el.count() > 0:
-                    await el.click()
-                    await page.wait_for_load_state("domcontentloaded", timeout=15000)
-                    await page.wait_for_timeout(2000)
-            html = await page.content()
-            receitas = _parse_pgdas_lxml(html, ano)
-            if receitas:
+            await page.goto(dctf_url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(3000)
+            if "dctfweb" in page.url.lower():
+                dctfweb_acessado = True
                 break
         except Exception:
             pass
 
-    return {
-        "receitas": receitas,
-        "aviso": (
-            f"Faturamento LP/LR: {len(receitas)} competência(s) extraída(s) do e-CAC."
-            if receitas
-            else (
-                "e-CAC acessado. Nenhum dado de receita bruta encontrado automaticamente. "
-                "Para Lucro Presumido/Real, o faturamento mensal pode ser inserido manualmente "
-                "ou consultado via ECF/EFD-Contribuições no e-CAC."
-            )
-        ),
+    if not dctfweb_acessado:
+        # Tenta via menu do e-CAC
+        for sel in [
+            "a:has-text('DCTFWeb')",
+            "a:has-text('DCTF Web')",
+            "a[href*='dctfweb']",
+        ]:
+            try:
+                el = page.locator(sel).first
+                if await el.count() > 0:
+                    await el.click()
+                    await page.wait_for_load_state("domcontentloaded", timeout=20000)
+                    await page.wait_for_timeout(3000)
+                    dctfweb_acessado = True
+                    break
+            except Exception:
+                pass
+
+    # ── 3. Acessa aba MIT (Módulo de Informações Tributárias) ────────────────
+    for sel in [
+        "a:has-text('MIT')",
+        "a:has-text('Módulo de Informações')",
+        "a:has-text('Informações Tributárias')",
+        "[aria-label*='MIT']",
+        "button:has-text('MIT')",
+        "li:has-text('MIT') a",
+        "tab:has-text('MIT')",
+        ".nav-item:has-text('MIT') a",
+    ]:
+        try:
+            el = page.locator(sel).first
+            if await el.count() > 0:
+                await el.click()
+                await page.wait_for_load_state("domcontentloaded", timeout=20000)
+                await page.wait_for_timeout(3000)
+                break
+        except Exception:
+            pass
+
+    # ── 4. Seleciona o ano no MIT ─────────────────────────────────────────────
+    try:
+        # Tenta selecionar ano em dropdown
+        sel_ano = page.locator(f"select option[value='{ano}']").first
+        if await sel_ano.count() > 0:
+            parent = page.locator(f"select:has(option[value='{ano}'])").first
+            await parent.select_option(str(ano))
+            await page.wait_for_timeout(2000)
+        else:
+            # Tenta campo de texto/input de ano
+            inp = page.locator("input[name*='ano'], input[id*='ano'], input[placeholder*='ano']").first
+            if await inp.count() > 0:
+                await inp.fill(str(ano))
+                await inp.press("Enter")
+                await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                await page.wait_for_timeout(2000)
+    except Exception:
+        pass
+
+    # ── 5. Clica em "Consultar" / "Pesquisar" se houver botão ────────────────
+    for sel in [
+        "button:has-text('Consultar')", "button:has-text('Pesquisar')",
+        "input[type='submit'][value*='Consult']",
+        "a:has-text('Consultar')",
+    ]:
+        try:
+            el = page.locator(sel).first
+            if await el.count() > 0:
+                await el.click()
+                await page.wait_for_load_state("domcontentloaded", timeout=20000)
+                await page.wait_for_timeout(2000)
+                break
+        except Exception:
+            pass
+
+    # ── 6. Extrai receita bruta da tabela resultante ──────────────────────────
+    html = await page.content()
+    receitas = _parse_mit_lxml(html, ano)
+
+    # ── 7. Fallback: itera pelos meses manualmente ───────────────────────────
+    if not receitas:
+        for mes in range(1, 13):
+            comp_slash = f"{mes:02d}/{ano}"
+            try:
+                el = page.locator(
+                    f"a:has-text('{comp_slash}'), td:has-text('{comp_slash}'), "
+                    f"option:has-text('{comp_slash}')"
+                ).first
+                if await el.count() > 0:
+                    tag = await el.evaluate("e => e.tagName.toLowerCase()")
+                    if tag == "option":
+                        parent = page.locator(f"select:has(option:has-text('{comp_slash}'))").first
+                        await parent.select_option(label=comp_slash)
+                    else:
+                        await el.click()
+                    await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    await page.wait_for_timeout(1500)
+                    html_m = await page.content()
+                    recs = _parse_mit_lxml(html_m, ano, mes_fixo=mes)
+                    for r in recs:
+                        if not any(x["competencia"] == r["competencia"] for x in receitas):
+                            receitas.append(r)
+                    await page.go_back()
+                    await page.wait_for_timeout(1000)
+            except Exception:
+                pass
+
+    aviso = (
+        f"MIT/DCTFWeb: {len(receitas)} competência(s) de {ano} extraída(s)."
+        if receitas
+        else (
+            "Acesso ao DCTFWeb estabelecido. MIT localizado mas sem dados de receita bruta "
+            f"de {ano} encontrados na página atual. Verifique se há DCTFWs transmitidas para "
+            "o período — se a empresa ainda não transmitiu, não há dados disponíveis."
+        )
+    )
+    return {"receitas": receitas, "aviso": aviso}
     }
 
 
@@ -916,6 +1066,107 @@ async def _consultar_cnd_falencia(cnpj: str) -> dict:
 
 
 # ─── Parsers ─────────────────────────────────────────────────────────────────
+
+def _parse_mit_lxml(html: str, ano: int, mes_fixo: Optional[int] = None) -> list:
+    """
+    Parser específico para o MIT da DCTFWeb.
+
+    O MIT exibe a receita bruta por competência em formato de tabela.
+    Colunas típicas: Competência | Receita Bruta | Deduções | Base de Cálculo | IRPJ | CSLL
+
+    Extrai a coluna "Receita Bruta" ou "Receita" para cada competência do ano.
+    """
+    receitas: list[dict] = []
+
+    try:
+        from lxml import html as lx
+        tree = lx.fromstring(html)
+
+        for table in tree.iter("table"):
+            headers = [
+                " ".join(th.text_content().split()).upper()
+                for th in table.iter("th")
+            ]
+
+            # Identifica índice da coluna de Receita Bruta
+            receita_idx = None
+            comp_idx = None
+            for i, h in enumerate(headers):
+                if "RECEITA BRUTA" in h or ("RECEITA" in h and "BRUTA" in h):
+                    receita_idx = i
+                if "COMPETÊNCIA" in h or "COMPETENCIA" in h or "PERÍODO" in h or "PERIODO" in h:
+                    comp_idx = i
+
+            rows = [r for r in table.iter("tr") if list(r.iter("td"))]
+            for row in rows:
+                cells = [" ".join(td.text_content().split()) for td in row.iter("td")]
+                if not cells:
+                    continue
+
+                row_text = " ".join(cells)
+
+                # Extrai competência MM/AAAA
+                comp_m = re.search(r'(\d{2})/(\d{4})', row_text)
+                if not comp_m:
+                    continue
+                mes_s, ano_s = comp_m.group(1), comp_m.group(2)
+                if int(ano_s) != ano:
+                    continue
+                if mes_fixo and int(mes_s) != mes_fixo:
+                    continue
+
+                # Prefere coluna de Receita Bruta se mapeada
+                valor_str = None
+                if receita_idx is not None and receita_idx < len(cells):
+                    valor_str = cells[receita_idx]
+                else:
+                    # Heurística: pega o maior valor numérico na linha
+                    # (geralmente a receita bruta é o maior número antes das deduções)
+                    vals = re.findall(r'[\d]{1,3}(?:\.[\d]{3})*,[\d]{2}', row_text)
+                    if vals:
+                        valor_str = max(vals, key=lambda v: float(v.replace(".", "").replace(",", ".")))
+
+                if not valor_str:
+                    continue
+
+                val_clean = re.sub(r"[^\d,.]", "", valor_str).replace(".", "").replace(",", ".")
+                try:
+                    valor = float(val_clean)
+                    if valor <= 0:
+                        continue
+                    comp = f"{ano_s}-{mes_s.zfill(2)}"
+                    if not any(r["competencia"] == comp for r in receitas):
+                        receitas.append({"competencia": comp, "valor_receita": valor, "origem": "dctfweb_mit"})
+                except ValueError:
+                    pass
+
+    except ImportError:
+        pass
+
+    # Fallback regex: procura padrão "MM/AAAA ... R$ valor" ou "valor" próximo de competência
+    if not receitas:
+        pat = re.compile(
+            r'(\d{2})/(\d{4})[^<\n]{0,300}?'
+            r'(?:Receita\s+Bruta[^<\n]{0,50})?'
+            r'([\d]{1,3}(?:\.[\d]{3})*,[\d]{2})',
+            re.DOTALL | re.IGNORECASE,
+        )
+        for m in pat.finditer(html):
+            mes_s, ano_s, val_s = m.group(1), m.group(2), m.group(3)
+            if int(ano_s) != ano:
+                continue
+            if mes_fixo and int(mes_s) != mes_fixo:
+                continue
+            val = val_s.replace(".", "").replace(",", ".")
+            try:
+                comp = f"{ano_s}-{mes_s.zfill(2)}"
+                if not any(r["competencia"] == comp for r in receitas):
+                    receitas.append({"competencia": comp, "valor_receita": float(val), "origem": "dctfweb_mit"})
+            except ValueError:
+                pass
+
+    return receitas
+
 
 def _parse_pgdas_lxml(html: str, ano: int, mes_fixo: Optional[int] = None) -> list:
     """
