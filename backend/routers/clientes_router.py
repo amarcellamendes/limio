@@ -189,9 +189,10 @@ async def upload_certificado(
     with open(caminho, "wb") as f:
         f.write(conteudo)
 
-    # Extrai data de validade do certificado
+    # Tenta abrir o PFX para extrair vencimento; falha explícita se senha fornecida e errada
     vencimento_str = None
     vencimento_date = None
+    senha_errada = False
     try:
         from cryptography.hazmat.primitives.serialization.pkcs12 import load_pkcs12
         senha_bytes = senha.encode("utf-8") if senha else b""
@@ -205,8 +206,12 @@ async def upload_certificado(
                 dt = cert.not_valid_after.replace(tzinfo=_dt.timezone.utc)
             vencimento_date = dt.date()
             vencimento_str = vencimento_date.isoformat()
-    except Exception:
-        pass  # senha errada ou cert inválido — salva sem vencimento
+    except Exception as exc:
+        msg = str(exc).lower()
+        # Se a senha foi informada e claramente está errada, avisa mas salva o arquivo
+        if senha and ("mac" in msg or "password" in msg or "invalid" in msg or "decrypt" in msg):
+            senha_errada = True
+        # Para cert sem senha: tenta com b"" (já foi tentado acima); ignora silenciosamente
 
     if tipo == "nfse":
         cliente.nfse_certificado_path = caminho
@@ -218,7 +223,15 @@ async def upload_certificado(
             cliente.nfe_certificado_vencimento = vencimento_date
 
     await db.commit()
-    return {"ok": True, "caminho": caminho, "nome": nome, "tamanho": len(conteudo), "vencimento": vencimento_str}
+    return {
+        "ok": True,
+        "caminho": caminho,
+        "nome": nome,
+        "tamanho": len(conteudo),
+        "vencimento": vencimento_str,
+        "senha_errada": senha_errada,
+        "aviso": "Certificado salvo, mas a senha está incorreta — vencimento não pôde ser lido. Corrija a senha no campo 'Senha do certificado'." if senha_errada else None,
+    }
 
 
 async def _get_cliente_ou_404(

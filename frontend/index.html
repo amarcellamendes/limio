@@ -1731,6 +1731,25 @@
       </div>
     </div>
 
+    <!-- Modal senha certificado (integração RF/eSocial) -->
+    <div x-show="integracao.modalSenha" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+        <h3 class="font-bold text-lg text-primary mb-2">Senha do Certificado Digital</h3>
+        <p class="text-sm text-gray-500 mb-4">
+          A senha do certificado não está salva ou está incorreta.<br>
+          Informe a senha para continuar.
+        </p>
+        <form @submit.prevent="confirmarSenhaIntegracao()">
+          <input type="password" x-model="integracao.senhaTemp" class="input mb-4" placeholder="Senha do .pfx" autofocus />
+          <div class="flex gap-3">
+            <button type="submit" class="btn-primary flex-1">Confirmar</button>
+            <button type="button" @click="integracao.modalSenha = false" class="btn-secondary flex-1">Cancelar</button>
+          </div>
+        </form>
+        <p class="text-xs text-gray-400 mt-3">Dica: salve a senha no cadastro do cliente para não precisar informar novamente.</p>
+      </div>
+    </div>
+
     <!-- ── EQUIPE ── -->
     <div x-show="page==='equipe'" class="p-6 max-w-4xl">
       <div class="flex items-center justify-between mb-6">
@@ -2946,7 +2965,7 @@ function app() {
     certVencendo: [],
 
     // Integrações RF/eSocial
-    integracao: { buscandoPgdas: false, buscandoEsocial: false },
+    integracao: { buscandoPgdas: false, buscandoEsocial: false, modalSenha: false, senhaTemp: '', acaoAposSenha: null },
 
     // Equipe
     equipe: [],
@@ -3231,6 +3250,9 @@ function app() {
           }
           this.pendingCerts[tipo] = null
           this.pendingCertNames[tipo] = ''
+          if (d.senha_errada) {
+            this.modalCliente.erro = d.aviso
+          }
         }
       } finally {
         this.uploadingCert[tipo] = false
@@ -4132,11 +4154,15 @@ function app() {
 
     // ─── INTEGRAÇÕES RF / eSocial ──────────────────────
 
-    async buscarPgdas() {
+    async buscarPgdas(senhaForce = null) {
       if (!this.apuracao.clienteId) return this.showToast('Selecione um cliente.', 'error')
+      const cliente = this.clientes.find(c => c.id === this.apuracao.clienteId)
+      const senhaDb = cliente?.nfse_certificado_senha || cliente?.nfe_certificado_senha || ''
+      const senha = senhaForce ?? senhaDb
       this.integracao.buscandoPgdas = true
       try {
-        const d = await this.api(`/api/integracoes/${this.apuracao.clienteId}/buscar-pgdas?ano=${this.apuracao.ano}`, 'POST')
+        const url = `/api/integracoes/${this.apuracao.clienteId}/buscar-pgdas?ano=${this.apuracao.ano}&senha=${encodeURIComponent(senha)}`
+        const d = await this.api(url, 'POST')
         if (d.receitas && d.receitas.length > 0) {
           for (const rec of d.receitas) {
             await this.api(`/api/receita-historica/${this.apuracao.clienteId}/${rec.competencia}`, 'POST',
@@ -4145,17 +4171,29 @@ function app() {
           await this.carregarApuracao()
           this.showToast(`${d.receitas.length} competência(s) importada(s) do PGDAS-D!`)
         } else {
-          this.showToast(d.aviso || 'Nenhum dado retornado. Lance manualmente.', 'error')
+          this.showToast(d.aviso || 'Nenhum dado retornado. Lance manualmente.')
         }
-      } catch(e) { this.showToast(e.message || 'Erro ao consultar Receita Federal.', 'error') }
-      finally { this.integracao.buscandoPgdas = false }
+      } catch(e) {
+        const msg = e.message || ''
+        if (msg.includes('Senha incorreta') || msg.includes('não encontrado') || msg.includes('senha')) {
+          this.integracao.acaoAposSenha = 'pgdas'
+          this.integracao.senhaTemp = ''
+          this.integracao.modalSenha = true
+        } else {
+          this.showToast(msg || 'Erro ao consultar Receita Federal.', 'error')
+        }
+      } finally { this.integracao.buscandoPgdas = false }
     },
 
-    async buscarEsocial() {
+    async buscarEsocial(senhaForce = null) {
       if (!this.apuracao.clienteId) return this.showToast('Selecione um cliente.', 'error')
+      const cliente = this.clientes.find(c => c.id === this.apuracao.clienteId)
+      const senhaDb = cliente?.nfse_certificado_senha || cliente?.nfe_certificado_senha || ''
+      const senha = senhaForce ?? senhaDb
       this.integracao.buscandoEsocial = true
       try {
-        const d = await this.api(`/api/integracoes/${this.apuracao.clienteId}/buscar-esocial?ano=${this.apuracao.ano}`, 'POST')
+        const url = `/api/integracoes/${this.apuracao.clienteId}/buscar-esocial?ano=${this.apuracao.ano}&senha=${encodeURIComponent(senha)}`
+        const d = await this.api(url, 'POST')
         if (d.folhas && d.folhas.length > 0) {
           for (const f of d.folhas) {
             await fetch(`/api/folha/${this.apuracao.clienteId}/${f.competencia}`, {
@@ -4167,10 +4205,25 @@ function app() {
           await this.carregarApuracao()
           this.showToast(`${d.folhas.length} competência(s) importada(s) do eSocial!`)
         } else {
-          this.showToast(d.aviso || 'Nenhum dado retornado. Lance manualmente.', 'error')
+          this.showToast(d.aviso || 'Nenhum dado retornado. Lance manualmente.')
         }
-      } catch(e) { this.showToast(e.message || 'Erro ao consultar eSocial.', 'error') }
-      finally { this.integracao.buscandoEsocial = false }
+      } catch(e) {
+        const msg = e.message || ''
+        if (msg.includes('Senha incorreta') || msg.includes('não encontrado') || msg.includes('senha')) {
+          this.integracao.acaoAposSenha = 'esocial'
+          this.integracao.senhaTemp = ''
+          this.integracao.modalSenha = true
+        } else {
+          this.showToast(msg || 'Erro ao consultar eSocial.', 'error')
+        }
+      } finally { this.integracao.buscandoEsocial = false }
+    },
+
+    async confirmarSenhaIntegracao() {
+      const senha = this.integracao.senhaTemp
+      this.integracao.modalSenha = false
+      if (this.integracao.acaoAposSenha === 'pgdas') await this.buscarPgdas(senha)
+      else await this.buscarEsocial(senha)
     },
 
     // ─── EQUIPE ────────────────────────────────────────

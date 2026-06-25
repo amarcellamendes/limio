@@ -33,13 +33,18 @@ _PGDAS_URL = "https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATB
 _ESOCIAL_URL = "https://webservices.consulta.esocial.gov.br/WsConsultaESocial/ServicoConsultaESocial.svc"
 
 
-async def _carregar_certificado(cliente: Cliente, tipo: str):
+async def _carregar_certificado(cliente: Cliente, tipo: str, senha_override: str = ""):
     """Extrai PEM (cert + key) do .pfx do cliente. Retorna (cert_pem, key_pem, erro_str)."""
     path = getattr(cliente, f"{tipo}_certificado_path", None)
-    senha = getattr(cliente, f"{tipo}_certificado_senha", None) or ""
+    senha = senha_override or getattr(cliente, f"{tipo}_certificado_senha", None) or ""
 
-    if not path or not os.path.exists(path):
-        return None, None, f"Certificado {tipo.upper()} não encontrado. Faça o upload no cadastro do cliente."
+    if not path:
+        return None, None, f"Certificado {tipo.upper()} não cadastrado. Faça o upload no cadastro do cliente."
+    if not os.path.exists(path):
+        return None, None, (
+            f"Arquivo do certificado {tipo.upper()} não encontrado no servidor ({path}). "
+            "Faça o upload novamente no cadastro do cliente."
+        )
 
     try:
         from cryptography.hazmat.primitives.serialization.pkcs12 import load_pkcs12
@@ -53,13 +58,22 @@ async def _carregar_certificado(cliente: Cliente, tipo: str):
         key_pem = p12.key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
         return cert_pem, key_pem, None
     except Exception as e:
-        return None, None, f"Erro ao abrir certificado: {str(e)}. Verifique a senha."
+        msg = str(e).lower()
+        if "mac" in msg or "password" in msg or "invalid" in msg or "decrypt" in msg:
+            dica = (
+                f"Senha incorreta para o certificado {tipo.upper()}. "
+                "Corrija a senha no cadastro do cliente e tente novamente."
+            )
+        else:
+            dica = f"Erro ao abrir certificado {tipo.upper()}: {str(e)}"
+        return None, None, dica
 
 
 @router.post("/{cliente_id}/buscar-pgdas")
 async def buscar_pgdas(
     cliente_id: int,
     ano: int = Query(default=2025),
+    senha: str = Query(default=""),
     escritorio: Escritorio = Depends(get_escritorio_atual),
     db: AsyncSession = Depends(get_db),
 ):
@@ -74,10 +88,10 @@ async def buscar_pgdas(
     if not cliente:
         raise HTTPException(404, "Cliente não encontrado.")
 
-    # Tenta NFS-e primeiro, depois NF-e
-    cert_pem, key_pem, erro = await _carregar_certificado(cliente, "nfse")
+    # Tenta NFS-e primeiro, depois NF-e (ambos com senha_override se fornecida)
+    cert_pem, key_pem, erro = await _carregar_certificado(cliente, "nfse", senha)
     if erro:
-        cert_pem, key_pem, erro = await _carregar_certificado(cliente, "nfe")
+        cert_pem, key_pem, erro = await _carregar_certificado(cliente, "nfe", senha)
     if erro:
         raise HTTPException(400, erro)
 
@@ -139,6 +153,7 @@ async def buscar_pgdas(
 async def buscar_esocial(
     cliente_id: int,
     ano: int = Query(default=2025),
+    senha: str = Query(default=""),
     escritorio: Escritorio = Depends(get_escritorio_atual),
     db: AsyncSession = Depends(get_db),
 ):
@@ -153,9 +168,9 @@ async def buscar_esocial(
     if not cliente:
         raise HTTPException(404, "Cliente não encontrado.")
 
-    cert_pem, key_pem, erro = await _carregar_certificado(cliente, "nfse")
+    cert_pem, key_pem, erro = await _carregar_certificado(cliente, "nfse", senha)
     if erro:
-        cert_pem, key_pem, erro = await _carregar_certificado(cliente, "nfe")
+        cert_pem, key_pem, erro = await _carregar_certificado(cliente, "nfe", senha)
     if erro:
         raise HTTPException(400, erro)
 
