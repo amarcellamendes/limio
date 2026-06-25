@@ -214,6 +214,13 @@
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
         Emitir NF-e
       </button>
+      <button @click="goto('certidoes')" :class="page==='certidoes' ? 'active' : ''" class="sl w-full">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        Certidões
+        <span x-show="certidoes.vencendo.length > 0" x-cloak
+              class="ml-auto text-xs font-bold bg-red-500 text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center"
+              x-text="certidoes.vencendo.length"></span>
+      </button>
       <div class="pt-2 pb-1 px-4">
         <p class="text-xs text-white/50 uppercase tracking-widest font-semibold">Cadastros</p>
       </div>
@@ -1008,7 +1015,16 @@
           <h2 class="text-xl font-bold text-primary">Clientes</h2>
           <p class="text-sm text-gray-500">CNPJs gerenciados pelo escritório</p>
         </div>
-        <button @click="abrirModalCliente(null)" class="btn-primary">+ Novo Cliente</button>
+        <div class="flex gap-2">
+          <button @click="buscarEmLote()" :disabled="integracao.buscandoLote" class="btn-secondary flex items-center gap-2">
+            <span x-show="!integracao.buscandoLote">🔍 Busca em Lote (PGDAS-D + eSocial)</span>
+            <span x-show="integracao.buscandoLote" class="flex items-center gap-2">
+              <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path></svg>
+              Buscando...
+            </span>
+          </button>
+          <button @click="abrirModalCliente(null)" class="btn-primary">+ Novo Cliente</button>
+        </div>
       </div>
 
       <div x-show="loadingPage" class="flex justify-center py-10">
@@ -1728,6 +1744,185 @@
             <button @click="goto('planos')" class="btn-primary">Ver Planos</button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- ── CERTIDÕES ── -->
+    <div x-show="page==='certidoes'" class="p-6 max-w-5xl">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-xl font-bold text-primary">Certidões</h2>
+          <p class="text-sm text-gray-500">Gestão de certidões negativas municipais, estaduais, federais, trabalhistas e FGTS</p>
+        </div>
+        <div class="flex gap-2">
+          <select x-model="certidoes.filtroCliente" @change="carregarCertidoes()" class="input text-sm w-48">
+            <option value="">Todos os clientes</option>
+            <template x-for="c in clientes" :key="c.id">
+              <option :value="c.id" x-text="c.razao_social"></option>
+            </template>
+          </select>
+          <button @click="abrirCertidaoModal(null)" class="btn-primary">+ Nova Certidão</button>
+        </div>
+      </div>
+
+      <!-- Alertas de vencimento -->
+      <template x-if="certidoes.vencendo.length > 0">
+        <div class="mb-4 p-4 bg-red-50 border border-red-200 rounded-xl">
+          <p class="text-sm font-bold text-red-700 mb-2">⚠️ Certidões vencendo em 30 dias</p>
+          <div class="space-y-1">
+            <template x-for="v in certidoes.vencendo" :key="v.id">
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-red-800">
+                  <strong x-text="v.cliente_razao_social"></strong> —
+                  <span x-text="v.nome_descritivo || certidoes.tipoNome(v.tipo)"></span>
+                </span>
+                <span :class="v.dias_restantes <= 0 ? 'text-red-700 font-bold' : 'text-orange-700'"
+                      x-text="v.dias_restantes <= 0 ? 'VENCIDA' : `vence em ${v.dias_restantes} dia(s)`"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <!-- Tabela de certidões -->
+      <div class="card overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-gray-100 text-xs text-gray-500 uppercase">
+              <th class="text-left py-2 pr-3">Cliente</th>
+              <th class="text-left py-2 pr-3">Tipo</th>
+              <th class="text-left py-2 pr-3">Nº Certidão</th>
+              <th class="text-left py-2 pr-3">Consulta</th>
+              <th class="text-left py-2 pr-3">Validade</th>
+              <th class="text-left py-2 pr-3">Próx. verificação</th>
+              <th class="text-left py-2 pr-3">Status</th>
+              <th class="text-left py-2">Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-if="certidoes.lista.length === 0">
+              <tr><td colspan="8" class="py-8 text-center text-gray-400 text-sm">Nenhuma certidão cadastrada. Clique em "+ Nova Certidão" para começar.</td></tr>
+            </template>
+            <template x-for="cert in certidoes.lista" :key="cert.id">
+              <tr class="border-b border-gray-50 hover:bg-gray-50">
+                <td class="py-2 pr-3 font-medium text-xs" x-text="cert.cliente_razao_social || '—'"></td>
+                <td class="py-2 pr-3">
+                  <span class="text-xs" x-text="cert.nome_descritivo || certidoes.tipoNome(cert.tipo)"></span>
+                  <a x-show="cert.url_portal" :href="cert.url_portal" target="_blank"
+                     class="ml-1 text-teal-600 text-xs hover:underline" title="Abrir portal">↗</a>
+                </td>
+                <td class="py-2 pr-3 text-xs font-mono" x-text="cert.numero_certidao || '—'"></td>
+                <td class="py-2 pr-3 text-xs" x-text="cert.data_consulta ? cert.data_consulta.substring(0,10) : '—'"></td>
+                <td class="py-2 pr-3 text-xs"
+                    :class="certidoes.classValidade(cert)"
+                    x-text="cert.data_validade ? cert.data_validade.substring(0,10) : '—'"></td>
+                <td class="py-2 pr-3 text-xs" x-text="cert.data_agendamento ? cert.data_agendamento.substring(0,10) : '—'"></td>
+                <td class="py-2 pr-3">
+                  <span :class="certidoes.classBadge(cert.status)" class="text-xs px-2 py-0.5 rounded-full font-semibold"
+                        x-text="certidoes.statusNome(cert.status)"></span>
+                </td>
+                <td class="py-2">
+                  <div class="flex gap-1">
+                    <button @click="abrirCertidaoModal(cert)" class="btn-secondary text-xs px-2 py-1">Editar</button>
+                    <button @click="excluirCertidao(cert.id)" class="text-xs text-red-500 hover:text-red-700 px-2 py-1">✕</button>
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Modal Certidão -->
+    <div x-show="certidoes.modalShow" x-cloak
+         class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+         @click.self="certidoes.modalShow=false">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto p-6">
+        <h3 class="text-lg font-bold text-primary mb-4" x-text="certidoes.modalEditando ? 'Editar Certidão' : 'Nova Certidão'"></h3>
+        <form @submit.prevent="salvarCertidao()" class="space-y-4">
+          <div class="grid grid-cols-2 gap-3">
+            <div class="col-span-2">
+              <label class="label">Cliente *</label>
+              <select x-model="certidoes.form.cliente_id" class="input" required
+                      @change="_atualizarPortalCertidao()">
+                <option value="">Selecione o cliente</option>
+                <template x-for="c in clientes" :key="c.id">
+                  <option :value="c.id" x-text="c.razao_social"></option>
+                </template>
+              </select>
+            </div>
+            <div>
+              <label class="label">Tipo de Certidão *</label>
+              <select x-model="certidoes.form.tipo" class="input" required @change="_atualizarPortalCertidao()">
+                <option value="">Selecione...</option>
+                <option value="cnd_federal">CND Federal (Receita Federal + PGFN)</option>
+                <option value="cnd_falencia">Certidão de Falência/Recuperação Judicial</option>
+                <option value="cnd_fgts">CRF - Certidão de Regularidade do FGTS</option>
+                <option value="cndt_tst">CNDT - Certidão Trabalhista (TST Nacional)</option>
+                <option value="cndt_trt">CNDT - Certidão Trabalhista Regional (TRT)</option>
+                <option value="cnd_estadual">CND Estadual de Regularidade Fiscal (ICMS)</option>
+                <option value="cnd_estadual_nc">Certidão de Não Contribuinte Estadual</option>
+                <option value="cnd_municipal">CND Municipal (ISS / Prefeitura)</option>
+              </select>
+            </div>
+            <div>
+              <label class="label">Status</label>
+              <select x-model="certidoes.form.status" class="input">
+                <option value="pendente">Pendente</option>
+                <option value="regular">Regular</option>
+                <option value="irregular">Irregular</option>
+                <option value="em_analise">Em análise</option>
+                <option value="vencida">Vencida</option>
+              </select>
+            </div>
+            <!-- Info do portal quando tipo selecionado -->
+            <div x-show="certidoes.portalInfo.nome" class="col-span-2 flex items-center gap-2 p-2 bg-teal-50 border border-teal-200 rounded-lg">
+              <span class="text-xs text-teal-800">Portal: <strong x-text="certidoes.portalInfo.nome"></strong></span>
+              <a :href="certidoes.portalInfo.url" target="_blank" class="text-xs text-teal-600 hover:underline ml-auto">
+                Abrir portal ↗
+              </a>
+            </div>
+            <div>
+              <label class="label">Nº da Certidão</label>
+              <input type="text" x-model="certidoes.form.numero_certidao" class="input" placeholder="Ex: CERT-2026-00001" />
+            </div>
+            <div>
+              <label class="label">Data da Consulta</label>
+              <input type="date" x-model="certidoes.form.data_consulta" class="input" />
+            </div>
+            <div>
+              <label class="label">Validade</label>
+              <input type="date" x-model="certidoes.form.data_validade" class="input" />
+            </div>
+            <div>
+              <label class="label">Próx. Verificação</label>
+              <input type="date" x-model="certidoes.form.data_agendamento" class="input" />
+            </div>
+            <div class="col-span-2">
+              <label class="label">Observação</label>
+              <textarea x-model="certidoes.form.observacao" class="input h-16 resize-none" placeholder="Anotações sobre esta certidão..."></textarea>
+            </div>
+            <div class="col-span-2 flex gap-4">
+              <label class="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" x-model="certidoes.form.enviar_email" class="w-4 h-4 accent-accent" />
+                Enviar ao e-mail do cliente ao obter
+              </label>
+            </div>
+            <div class="col-span-2" x-show="certidoes.form.enviar_email || certidoes.form.pasta_destino">
+              <label class="label">Salvar em pasta (caminho)</label>
+              <input type="text" x-model="certidoes.form.pasta_destino" class="input" placeholder="/certidoes/clientes/" />
+            </div>
+          </div>
+          <div x-show="certidoes.modalErro" class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3" x-text="certidoes.modalErro"></div>
+          <div class="flex gap-3 justify-end pt-2">
+            <button type="button" @click="certidoes.modalShow=false" class="btn-secondary">Cancelar</button>
+            <button type="submit" class="btn-primary" :disabled="loading">
+              <span x-show="!loading" x-text="certidoes.modalEditando ? 'Salvar' : 'Cadastrar'"></span>
+              <span x-show="loading">Salvando...</span>
+            </button>
+          </div>
+        </form>
       </div>
     </div>
 
@@ -2493,6 +2688,34 @@
           <label class="label">Discriminação dos Serviços</label>
           <textarea x-model="contratoForm.discriminacao" class="input h-20 resize-none" placeholder="Descrição dos serviços prestados..."></textarea>
         </div>
+        <!-- Construtora / Obra -->
+        <div class="mt-3 pt-3 border-t border-blue-100">
+          <label class="flex items-center gap-2 cursor-pointer text-sm font-medium text-orange-700">
+            <input type="checkbox" x-model="contratoForm.is_construtora" class="w-4 h-4 accent-orange-600" />
+            🏗️ Construtora / Incorporadora — ativar campos de obra
+          </label>
+        </div>
+        <div x-show="contratoForm.is_construtora" class="mt-3 p-3 bg-orange-50 border border-orange-200 rounded-xl space-y-3">
+          <p class="text-xs font-bold text-orange-700 uppercase tracking-wider">Dados da Obra</p>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="label">Nº CEI / CNO da Obra</label>
+              <input type="text" x-model="contratoForm.obra_cei" class="input" placeholder="12.345.67890/00" /></div>
+            <div><label class="label">Nº ART</label>
+              <input type="text" x-model="contratoForm.obra_art" class="input" placeholder="ART-2026-0001234" /></div>
+            <div><label class="label">Alvará / Licença</label>
+              <input type="text" x-model="contratoForm.obra_alvara" class="input" placeholder="Nº do alvará" /></div>
+            <div><label class="label">Matrícula CEF/INSS</label>
+              <input type="text" x-model="contratoForm.obra_matricula" class="input" placeholder="Matrícula" /></div>
+            <div class="col-span-2"><label class="label">Endereço da Obra</label>
+              <input type="text" x-model="contratoForm.obra_endereco" class="input" placeholder="Rua, número, bairro, cidade/UF" /></div>
+            <div><label class="label">Retenção INSS Obra</label>
+              <select x-model.number="contratoForm.obra_inss_aliquota" class="input">
+                <option value="0">Sem retenção</option>
+                <option value="3.5">3,5% — Empreitada total (Simples)</option>
+                <option value="11">11% — Cessão de mão de obra</option>
+              </select></div>
+          </div>
+        </div>
       </div>
 
       <!-- Tomador -->
@@ -2683,11 +2906,6 @@
           </select>
         </div>
         <div x-show="clienteForm.optante_simples">
-          <label class="label">Limite Simples (R$)</label>
-          <input type="number" x-model="clienteForm.limite_simples" class="input" step="1000" min="0" placeholder="4800000" />
-          <p class="text-xs text-gray-400 mt-1">Padrão: R$ 4.800.000 (2024)</p>
-        </div>
-        <div x-show="clienteForm.optante_simples">
           <label class="label">Anexo do Simples Nacional</label>
           <select x-model="clienteForm.anexo_simples" class="input">
             <option value="">Selecione...</option>
@@ -2698,6 +2916,9 @@
             <option value="V">Anexo V — Serviços (tributação maior)</option>
             <option value="III_V">Anexo III ou V — depende do Fator R (atividades mistas)</option>
           </select>
+          <p x-show="clienteForm.cnae" class="text-xs text-teal-700 mt-1">
+            CNAE <span x-text="clienteForm.cnae"></span> — <span x-text="clienteForm.cnae_descricao"></span>
+          </p>
         </div>
         <div x-show="clienteForm.optante_simples && (clienteForm.anexo_simples === 'III_V' || clienteForm.anexo_simples === 'III' || clienteForm.anexo_simples === 'V')" class="col-span-2">
           <label class="flex items-center gap-2 cursor-pointer">
@@ -2965,7 +3186,70 @@ function app() {
     certVencendo: [],
 
     // Integrações RF/eSocial
-    integracao: { buscandoPgdas: false, buscandoEsocial: false, modalSenha: false, senhaTemp: '', acaoAposSenha: null },
+    integracao: { buscandoPgdas: false, buscandoEsocial: false, buscandoLote: false, modalSenha: false, senhaTemp: '', acaoAposSenha: null },
+    certidoes: {
+      lista: [], vencendo: [], filtroCliente: '', modalShow: false, modalEditando: false, modalId: null, modalErro: '',
+      portalInfo: { nome: '', url: '' },
+      form: { cliente_id: '', tipo: '', status: 'pendente', nome_descritivo: '', numero_certidao: '', data_consulta: '', data_validade: '', data_agendamento: '', observacao: '', enviar_email: false, pasta_destino: '' },
+      tiposNomes: {
+        cnd_federal: 'CND Federal (RFB/PGFN)', cnd_falencia: 'Certidão de Falência/RJ',
+        cnd_fgts: 'CRF - FGTS', cndt_tst: 'CNDT Trabalhista (TST)',
+        cndt_trt: 'CNDT TRT Regional', cnd_estadual: 'CND Estadual (ICMS)',
+        cnd_estadual_nc: 'Certidão Não Contribuinte Estadual', cnd_municipal: 'CND Municipal (ISS)',
+      },
+      portais: {
+        cnd_federal: { nome: 'Receita Federal', url: 'https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/emitir' },
+        cnd_falencia: { nome: 'Junta Comercial (varia por estado)', url: '' },
+        cnd_fgts: { nome: 'Caixa Econômica Federal', url: 'https://consulta.caixa.gov.br/servicos/fgts-certidao/' },
+        cndt_tst: { nome: 'TST Nacional', url: 'https://www.tst.jus.br/certidao' },
+        cndt_trt: { nome: '', url: '' },
+        cnd_estadual: { nome: 'SEFAZ Estadual', url: '' },
+        cnd_estadual_nc: { nome: 'SEFAZ Estadual', url: '' },
+        cnd_municipal: { nome: 'Prefeitura Municipal', url: '' },
+      },
+      trtPorUF: {
+        RJ: { nome: 'TRT 1 — Rio de Janeiro', url: 'https://certidao.trt1.jus.br/' },
+        SP: { nome: 'TRT 2 — São Paulo (Capital)', url: 'https://www.trt2.jus.br/' },
+        MG: { nome: 'TRT 3 — Minas Gerais', url: 'https://certidao.trt3.jus.br/' },
+        RS: { nome: 'TRT 4 — Rio Grande do Sul', url: 'https://www.trt4.jus.br/' },
+        BA: { nome: 'TRT 5 — Bahia', url: 'https://www.trt5.jus.br/' },
+        PE: { nome: 'TRT 6 — Pernambuco', url: 'https://www.trt6.jus.br/' },
+        CE: { nome: 'TRT 7 — Ceará', url: 'https://www.trt7.jus.br/' },
+        PA: { nome: 'TRT 8 — Pará e Amapá', url: 'https://www.trt8.jus.br/' },
+        AP: { nome: 'TRT 8 — Pará e Amapá', url: 'https://www.trt8.jus.br/' },
+        PR: { nome: 'TRT 9 — Paraná', url: 'https://www.trt9.jus.br/' },
+        DF: { nome: 'TRT 10 — DF e Tocantins', url: 'https://www.trt10.jus.br/' },
+        TO: { nome: 'TRT 10 — DF e Tocantins', url: 'https://www.trt10.jus.br/' },
+        AM: { nome: 'TRT 11 — Amazonas e Roraima', url: 'https://www.trt11.jus.br/' },
+        RR: { nome: 'TRT 11 — Amazonas e Roraima', url: 'https://www.trt11.jus.br/' },
+        SC: { nome: 'TRT 12 — Santa Catarina', url: 'https://www.trt12.jus.br/' },
+        PB: { nome: 'TRT 13 — Paraíba', url: 'https://www.trt13.jus.br/' },
+        RO: { nome: 'TRT 14 — Rondônia e Acre', url: 'https://www.trt14.jus.br/' },
+        AC: { nome: 'TRT 14 — Rondônia e Acre', url: 'https://www.trt14.jus.br/' },
+        MA: { nome: 'TRT 16 — Maranhão', url: 'https://www.trt16.jus.br/' },
+        ES: { nome: 'TRT 17 — Espírito Santo', url: 'https://www.trt17.jus.br/' },
+        GO: { nome: 'TRT 18 — Goiás', url: 'https://www.trt18.jus.br/' },
+        AL: { nome: 'TRT 19 — Alagoas', url: 'https://www.trt19.jus.br/' },
+        SE: { nome: 'TRT 20 — Sergipe', url: 'https://www.trt20.jus.br/' },
+        RN: { nome: 'TRT 21 — Rio Grande do Norte', url: 'https://www.trt21.jus.br/' },
+        PI: { nome: 'TRT 22 — Piauí', url: 'https://www.trt22.jus.br/' },
+        MT: { nome: 'TRT 23 — Mato Grosso', url: 'https://www.trt23.jus.br/' },
+        MS: { nome: 'TRT 24 — Mato Grosso do Sul', url: 'https://www.trt24.jus.br/' },
+      },
+      tipoNome(tipo) { return this.tiposNomes[tipo] || tipo },
+      statusNome(s) { return { regular:'Regular', irregular:'Irregular', pendente:'Pendente', em_analise:'Em análise', vencida:'Vencida' }[s] || s },
+      classBadge(s) { return { regular:'bg-green-100 text-green-700', irregular:'bg-red-100 text-red-700', pendente:'bg-gray-100 text-gray-600', em_analise:'bg-yellow-100 text-yellow-700', vencida:'bg-red-200 text-red-800' }[s] || 'bg-gray-100 text-gray-500' },
+      classValidade(cert) {
+        if (!cert.data_validade) return 'text-gray-400'
+        const d = new Date(cert.data_validade); const hoje = new Date()
+        const dias = Math.ceil((d - hoje) / 86400000)
+        if (dias < 0) return 'text-red-700 font-bold'
+        if (dias <= 30) return 'text-orange-600 font-semibold'
+        return 'text-gray-700'
+      },
+      onClienteChange() { /* chamado via @change no template; pai chama _atualizarPortalCertidao() */ },
+      onTipoChange() { /* idem */ },
+    },
 
     // Equipe
     equipe: [],
@@ -3028,6 +3312,7 @@ function app() {
       nfse_provider:'mock', nfse_api_key:'', nfse_company_id:'',
       nfse_municipio_codigo:'', nfse_aliquota_iss: 5.0, nfse_serie_rps: 'RPS',
       nfse_certificado_path:'', nfse_certificado_senha:'', nfse_certificado_vencimento:'',
+      cnae: '', cnae_descricao: '',
       anexo_simples:'', atividade_permite_fator_r: false, limite_simples: 4800000,
       nfe_provider:'mock', nfe_api_key:'', nfe_company_id:'',
       nfe_serie:'1', nfe_certificado_path:'', nfe_certificado_senha:'', nfe_certificado_vencimento:'',
@@ -3094,6 +3379,7 @@ function app() {
       if (p === 'contratos') this.carregarContratos()
       if (p === 'configuracoes') this.carregarConfiguracoes()
       if (p === 'equipe') this.carregarEquipe()
+      if (p === 'certidoes') this.carregarCertidoes()
     },
 
     async carregarConfiguracoes() {
@@ -3531,6 +3817,7 @@ function app() {
           nfse_certificado_vencimento: c.nfse_certificado_vencimento ? c.nfse_certificado_vencimento.substring(0,10) : '',
           anexo_simples: c.anexo_simples || '',
           atividade_permite_fator_r: c.atividade_permite_fator_r ?? false,
+          cnae: c.cnae || '', cnae_descricao: c.cnae_descricao || '',
           limite_simples: c.limite_simples ?? 4800000,
           nfe_provider: c.nfe_provider || 'mock',
           nfe_api_key: c.nfe_api_key || '',
@@ -3967,6 +4254,10 @@ function app() {
           tomador_uf: c.tomador_uf || '', tomador_cep: c.tomador_cep || '',
           tomador_logradouro: c.tomador_logradouro || '', tomador_numero: c.tomador_numero || '',
           tomador_bairro: c.tomador_bairro || '', tomador_codigo_ibge: c.tomador_codigo_ibge || '',
+          is_construtora: c.is_construtora || false,
+          obra_cei: c.obra_cei || '', obra_art: c.obra_art || '',
+          obra_alvara: c.obra_alvara || '', obra_matricula: c.obra_matricula || '',
+          obra_endereco: c.obra_endereco || '', obra_inss_aliquota: c.obra_inss_aliquota || 0,
         }
       } else {
         this.modalContrato.editando = false; this.modalContrato.id = null
@@ -3979,6 +4270,8 @@ function app() {
           tomador_cnpj_busca: '', tomador_cpf_cnpj: '', tomador_razao_social: '',
           tomador_email: '', tomador_municipio: '', tomador_uf: '', tomador_cep: '',
           tomador_logradouro: '', tomador_numero: '', tomador_bairro: '', tomador_codigo_ibge: '',
+          is_construtora: false,
+          obra_cei: '', obra_art: '', obra_alvara: '', obra_matricula: '', obra_endereco: '', obra_inss_aliquota: 0,
         }
       }
       this.modalContrato.show = true
@@ -4096,6 +4389,64 @@ function app() {
       return t[String(ibge)] ?? 5.0
     },
 
+    // ─── DETECÇÃO DE ANEXO SIMPLES NACIONAL PELO CNAE ──
+
+    _detectarAnexoCNAE(cnae) {
+      if (!cnae) return { anexo: '', anexoDesc: '' }
+      const c = String(cnae).replace(/\D/g, '')
+      const c4 = c.slice(0, 4)
+      const c2 = c.slice(0, 2)
+
+      // Construção civil → Anexo IV
+      const constCivil = ['4110','4120','4211','4212','4213','4221','4222','4223',
+        '4291','4292','4299','4311','4312','4313','4319','4321','4322','4323',
+        '4329','4330','4391','4399']
+      if (constCivil.includes(c4)) return { anexo: 'IV', anexoDesc: 'Construção civil (CPP fora do DAS)' }
+
+      // Saúde → Anexo IV
+      const saude = ['8610','8621','8622','8630','8640','8650','8660','8690','8711','8712','8720','8730','8800']
+      if (saude.includes(c4)) return { anexo: 'IV', anexoDesc: 'Serviços de saúde (CPP fora do DAS)' }
+
+      // Advocacia → Anexo IV
+      if (['6911','6912'].includes(c4)) return { anexo: 'IV', anexoDesc: 'Atividades jurídicas (CPP fora do DAS)' }
+
+      // Educação → Anexo IV
+      const educ = ['8511','8512','8513','8520','8531','8532','8541','8542','8543','8550','8591','8592','8593','8599']
+      if (educ.includes(c4)) return { anexo: 'IV', anexoDesc: 'Educação (CPP fora do DAS)' }
+
+      // Arquitetura/Engenharia → Anexo V (fator R)
+      if (['7111','7112','7119'].includes(c4)) return { anexo: 'III_V', anexoDesc: 'Arquitetura e Engenharia — verificar Fator R (III ou V)' }
+
+      // TI / Software → Anexo V (fator R)
+      const ti = ['6201','6202','6203','6204','6209','6311','6319','6391','6399']
+      if (ti.includes(c4)) return { anexo: 'III_V', anexoDesc: 'TI e Software — verificar Fator R (III ou V)' }
+
+      // Publicidade → Anexo III/V
+      if (['7311','7312','7319','7320'].includes(c4)) return { anexo: 'III_V', anexoDesc: 'Publicidade — verificar Fator R (III ou V)' }
+
+      // Contabilidade → Anexo V
+      if (c4 === '6920') return { anexo: 'III_V', anexoDesc: 'Contabilidade — verificar Fator R (III ou V)' }
+
+      // Consultoria → Anexo V
+      if (['7020','7490'].includes(c4)) return { anexo: 'III_V', anexoDesc: 'Consultoria — verificar Fator R (III ou V)' }
+
+      // Comércio varejista (47xx) → Anexo I
+      if (c2 === '47') return { anexo: 'I', anexoDesc: 'Comércio varejista' }
+
+      // Comércio atacadista (46xx) → Anexo I
+      if (c2 === '46') return { anexo: 'I', anexoDesc: 'Comércio atacadista' }
+
+      // Indústria (10xx–33xx) → Anexo II
+      const setor = parseInt(c2)
+      if (setor >= 10 && setor <= 33) return { anexo: 'II', anexoDesc: 'Indústria' }
+
+      // Serviços em geral → Anexo III
+      if (setor >= 45 || (setor >= 55 && setor <= 99)) return { anexo: 'III', anexoDesc: 'Serviços (CPP no DAS)' }
+      if (setor >= 60 && setor <= 99) return { anexo: 'III', anexoDesc: 'Serviços (CPP no DAS)' }
+
+      return { anexo: '', anexoDesc: 'Não identificado — selecione manualmente' }
+    },
+
     // ─── BUSCA CNPJ (BrasilAPI + ISS automático) ──────
 
     async buscarCNPJ(cnpj, target) {
@@ -4116,6 +4467,11 @@ function app() {
           bairro: d.bairro || '', municipio: d.municipio || '',
           uf: d.uf || '', cep: (d.cep || '').replace(/\D/g,''), codigo_ibge: ibge,
         }
+        // Auto-detecta Anexo Simples Nacional pelo CNAE
+        const cnae = d.cnae_fiscal ? String(d.cnae_fiscal) : ''
+        const cnaeDesc = d.cnae_fiscal_descricao || ''
+        const { anexo, anexoDesc } = this._detectarAnexoCNAE(cnae)
+
         if (target === 'tomador_contrato') {
           Object.assign(this.contratoForm, {
             tomador_cpf_cnpj: digits, tomador_razao_social: nome,
@@ -4143,8 +4499,12 @@ function app() {
             optante_simples: d.opcao_pelo_simples !== undefined ? d.opcao_pelo_simples : this.clienteForm.optante_simples,
             nfse_aliquota_iss: issAliquota,
             nfse_municipio_codigo: ibge,
+            cnae: cnae,
+            cnae_descricao: cnaeDesc,
           })
-          this.showToast(`Dados preenchidos. ISS sugerido: ${issAliquota}% (${data.municipio}) — confirme com a prefeitura.`)
+          if (anexo) this.clienteForm.anexo_simples = anexo
+          const aviso = anexo ? ` | Anexo detectado: ${anexo} (${anexoDesc})` : ''
+          this.showToast(`Dados preenchidos. ISS: ${issAliquota}% (${data.municipio}) — confirme com a prefeitura.${aviso}`)
           return
         }
         this.showToast(`Dados preenchidos: ${nome.substring(0,40)}`)
@@ -4220,6 +4580,127 @@ function app() {
           this.showToast(msg || 'Erro ao consultar eSocial.', 'error')
         }
       } finally { this.integracao.buscandoEsocial = false }
+    },
+
+    async buscarEmLote() {
+      if (!confirm(`Buscar PGDAS-D e eSocial para todos os clientes com certificado? Isso pode levar alguns minutos.`)) return
+      this.integracao.buscandoLote = true
+      const ano = new Date().getFullYear()
+      try {
+        const d = await this.api('/api/integracoes/buscar-lote', 'POST', { ano })
+        const msg = `Lote concluído: ${d.total_clientes} cliente(s) | PGDAS-D: ${d.sucesso_pgdas} ok | eSocial: ${d.sucesso_esocial} ok`
+        this.showToast(msg)
+      } catch(e) {
+        this.showToast(e.message || 'Erro na busca em lote.', 'error')
+      } finally { this.integracao.buscandoLote = false }
+    },
+
+    // ─── CERTIDÕES ─────────────────────────────────────
+
+    async carregarCertidoes() {
+      try {
+        const q = this.certidoes.filtroCliente ? `?cliente_id=${this.certidoes.filtroCliente}` : ''
+        const lista = await this.api(`/api/certidoes${q}`)
+        // Enriquece com nome do cliente
+        this.certidoes.lista = lista.map(c => ({
+          ...c,
+          cliente_razao_social: (this.clientes.find(cl => cl.id === c.cliente_id) || {}).razao_social || '—',
+          url_portal: this._portalUrlCertidao(c),
+        }))
+        // Vencendo nos próximos 30 dias
+        const v = await this.api('/api/certidoes/vencendo?dias=30')
+        const hoje = new Date(); hoje.setHours(0,0,0,0)
+        this.certidoes.vencendo = v.map(c => {
+          const dv = c.data_validade ? new Date(c.data_validade) : null
+          const diasR = dv ? Math.ceil((dv - hoje) / 86400000) : null
+          return {
+            ...c,
+            dias_restantes: diasR,
+            cliente_razao_social: (this.clientes.find(cl => cl.id === c.cliente_id) || {}).razao_social || '—',
+          }
+        })
+      } catch(e) {}
+    },
+
+    _portalUrlCertidao(cert) {
+      const portais = this.certidoes.portais
+      if (cert.tipo === 'cndt_trt') {
+        const cli = this.clientes.find(c => c.id === cert.cliente_id)
+        if (cli?.uf) return this.certidoes.trtPorUF[cli.uf]?.url || ''
+        return ''
+      }
+      return portais[cert.tipo]?.url || ''
+    },
+
+    abrirCertidaoModal(cert) {
+      this.certidoes.modalErro = ''
+      if (cert) {
+        this.certidoes.modalEditando = true; this.certidoes.modalId = cert.id
+        this.certidoes.form = {
+          cliente_id: cert.cliente_id, tipo: cert.tipo, status: cert.status || 'pendente',
+          nome_descritivo: cert.nome_descritivo || '',
+          numero_certidao: cert.numero_certidao || '',
+          data_consulta: cert.data_consulta ? cert.data_consulta.substring(0, 10) : '',
+          data_validade: cert.data_validade ? cert.data_validade.substring(0, 10) : '',
+          data_agendamento: cert.data_agendamento ? cert.data_agendamento.substring(0, 10) : '',
+          observacao: cert.observacao || '',
+          enviar_email: cert.enviar_email || false,
+          pasta_destino: cert.pasta_destino || '',
+        }
+        this._atualizarPortalCertidao()
+      } else {
+        this.certidoes.modalEditando = false; this.certidoes.modalId = null
+        this.certidoes.form = {
+          cliente_id: this.certidoes.filtroCliente || '', tipo: '', status: 'pendente',
+          nome_descritivo: '', numero_certidao: '', data_consulta: '', data_validade: '',
+          data_agendamento: '', observacao: '', enviar_email: false, pasta_destino: '',
+        }
+        this.certidoes.portalInfo = { nome: '', url: '' }
+      }
+      this.certidoes.modalShow = true
+    },
+
+    _atualizarPortalCertidao() {
+      const tipo = this.certidoes.form.tipo
+      if (!tipo) { this.certidoes.portalInfo = { nome: '', url: '' }; return }
+      if (tipo === 'cndt_trt') {
+        const cli = this.clientes.find(c => c.id == this.certidoes.form.cliente_id)
+        const trt = cli?.uf ? this.certidoes.trtPorUF[cli.uf] : null
+        this.certidoes.portalInfo = trt ? { nome: trt.nome, url: trt.url } : { nome: 'Selecione cliente para identificar TRT', url: '' }
+      } else {
+        const p = this.certidoes.portais[tipo] || {}
+        this.certidoes.portalInfo = { nome: p.nome || '', url: p.url || '' }
+      }
+    },
+
+    async salvarCertidao() {
+      this.loading = true; this.certidoes.modalErro = ''
+      try {
+        const payload = { ...this.certidoes.form }
+        const dateFields = ['data_consulta', 'data_validade', 'data_agendamento']
+        dateFields.forEach(f => { if (!payload[f]) payload[f] = null })
+        if (!payload.nome_descritivo) {
+          payload.nome_descritivo = this.certidoes.tiposNomes[payload.tipo] || payload.tipo
+        }
+        const url = this.certidoes.modalEditando
+          ? `/api/certidoes/${this.certidoes.modalId}`
+          : '/api/certidoes'
+        const method = this.certidoes.modalEditando ? 'PUT' : 'POST'
+        await this.api(url, method, payload)
+        this.certidoes.modalShow = false
+        this.showToast(this.certidoes.modalEditando ? 'Certidão atualizada.' : 'Certidão cadastrada.')
+        await this.carregarCertidoes()
+      } catch(e) { this.certidoes.modalErro = e.message }
+      finally { this.loading = false }
+    },
+
+    async excluirCertidao(id) {
+      if (!confirm('Excluir esta certidão?')) return
+      try {
+        await this.api(`/api/certidoes/${id}`, 'DELETE')
+        this.showToast('Certidão excluída.')
+        await this.carregarCertidoes()
+      } catch(e) { this.showToast(e.message, 'error') }
     },
 
     async confirmarSenhaIntegracao() {

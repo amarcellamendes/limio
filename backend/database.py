@@ -68,8 +68,42 @@ def _migrate_sqlite(conn):
     add_col("clientes", "anexo_simples",                "VARCHAR(10)")
     add_col("clientes", "atividade_permite_fator_r",    "BOOLEAN DEFAULT 0")
 
-    # Clientes — responsável (carteira)
-    add_col("clientes", "responsavel_id", "INTEGER REFERENCES usuarios(id)")
+    # Clientes — CNAE e responsável
+    add_col("clientes", "cnae",            "VARCHAR(10)")
+    add_col("clientes", "cnae_descricao",  "VARCHAR(300)")
+    add_col("clientes", "responsavel_id",  "INTEGER REFERENCES usuarios(id)")
+
+    # Contratos — dados de obra
+    add_col("contratos", "is_construtora",      "BOOLEAN DEFAULT 0")
+    add_col("contratos", "obra_cei",            "VARCHAR(30)")
+    add_col("contratos", "obra_art",            "VARCHAR(50)")
+    add_col("contratos", "obra_alvara",         "VARCHAR(50)")
+    add_col("contratos", "obra_matricula",      "VARCHAR(50)")
+    add_col("contratos", "obra_endereco",       "VARCHAR(300)")
+    add_col("contratos", "obra_inss_aliquota",  "FLOAT DEFAULT 0")
+
+    # Certidões
+    if "certidoes" not in insp.get_table_names():
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS certidoes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                escritorio_id INTEGER NOT NULL REFERENCES escritorios(id),
+                cliente_id INTEGER NOT NULL REFERENCES clientes(id),
+                tipo VARCHAR(30) NOT NULL,
+                nome_descritivo VARCHAR(200),
+                data_consulta DATETIME,
+                data_validade DATETIME,
+                data_agendamento DATETIME,
+                status VARCHAR(20) DEFAULT 'pendente',
+                numero_certidao VARCHAR(100),
+                arquivo_path VARCHAR(500),
+                observacao TEXT,
+                enviar_email BOOLEAN DEFAULT 0,
+                pasta_destino VARCHAR(500),
+                criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+                atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
 
     # Cria tabelas novas se não existirem (create_all já faz isso, mas garantimos via migration)
     if "receita_historica" not in insp.get_table_names():

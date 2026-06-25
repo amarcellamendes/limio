@@ -184,6 +184,10 @@ class Cliente(Base):
     boleto_api_key: Mapped[Optional[str]] = mapped_column(String(200))
     boleto_dias_vencimento: Mapped[int] = mapped_column(Integer, default=3)  # dias após emissão
 
+    # CNAE (preenchido via busca RFB)
+    cnae: Mapped[Optional[str]] = mapped_column(String(10))
+    cnae_descricao: Mapped[Optional[str]] = mapped_column(String(300))
+
     # Responsável (funcionário do escritório) — carteira de clientes
     responsavel_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("usuarios.id"), nullable=True)
 
@@ -376,6 +380,15 @@ class Contrato(Base):
     codigo_servico_municipal: Mapped[Optional[str]] = mapped_column(String(20))
     discriminacao: Mapped[Optional[str]] = mapped_column(Text)
 
+    # Dados de Obra (construtoras)
+    is_construtora: Mapped[bool] = mapped_column(Boolean, default=False)
+    obra_cei: Mapped[Optional[str]] = mapped_column(String(30))
+    obra_art: Mapped[Optional[str]] = mapped_column(String(50))
+    obra_alvara: Mapped[Optional[str]] = mapped_column(String(50))
+    obra_matricula: Mapped[Optional[str]] = mapped_column(String(50))
+    obra_endereco: Mapped[Optional[str]] = mapped_column(String(300))
+    obra_inss_aliquota: Mapped[float] = mapped_column(Float, default=0.0)
+
     # Tomador pré-configurado
     tomador_cpf_cnpj: Mapped[Optional[str]] = mapped_column(String(18))
     tomador_razao_social: Mapped[Optional[str]] = mapped_column(String(300))
@@ -459,6 +472,46 @@ class FolhaMensal(Base):
     # "manual" = lançado pelo contador | "esocial" = importado via DCTFWeb/eSocial no futuro
     origem: Mapped[str] = mapped_column(String(20), default="manual")
     observacao: Mapped[Optional[str]] = mapped_column(String(300))
+
+    criado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    atualizado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    cliente: Mapped["Cliente"] = relationship()
+    escritorio: Mapped["Escritorio"] = relationship()
+
+
+# ---------------------------------------------------------------------------
+# CERTIDÕES — Gestão de certidões negativas dos clientes
+# ---------------------------------------------------------------------------
+
+class Certidao(Base):
+    """Registro de certidão (CND, CNDT, FGTS etc.) por cliente."""
+    __tablename__ = "certidoes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    escritorio_id: Mapped[int] = mapped_column(Integer, ForeignKey("escritorios.id"))
+    cliente_id: Mapped[int] = mapped_column(Integer, ForeignKey("clientes.id"), index=True)
+
+    # Tipo de certidão
+    tipo: Mapped[str] = mapped_column(String(30), index=True)
+    # cnd_federal, cnd_falencia, cnd_fgts, cndt_tst, cndt_trt,
+    # cnd_estadual, cnd_estadual_nc, cnd_municipal
+
+    nome_descritivo: Mapped[Optional[str]] = mapped_column(String(200))
+    data_consulta: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    data_validade: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    data_agendamento: Mapped[Optional[datetime]] = mapped_column(DateTime)  # próxima verificação
+
+    # regular, irregular, pendente, em_analise, vencida
+    status: Mapped[str] = mapped_column(String(20), default="pendente")
+
+    numero_certidao: Mapped[Optional[str]] = mapped_column(String(100))
+    arquivo_path: Mapped[Optional[str]] = mapped_column(String(500))
+    observacao: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Entrega automática
+    enviar_email: Mapped[bool] = mapped_column(Boolean, default=False)
+    pasta_destino: Mapped[Optional[str]] = mapped_column(String(500))
 
     criado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     atualizado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())

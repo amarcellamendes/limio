@@ -21,6 +21,127 @@ from ..config import settings
 router = APIRouter(prefix="/api/integracoes", tags=["Integrações RF/eSocial"])
 
 
+@router.post("/buscar-lote")
+async def buscar_lote(
+    payload: dict,
+    escritorio: Escritorio = Depends(get_escritorio_atual),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Busca PGDAS-D e eSocial em lote para todos os clientes com certificado configurado.
+    Payload: { "ano": 2025, "cliente_ids": [1,2,3] (opcional — omitir para todos) }
+    Retorna resultados parciais conforme vai completando.
+    """
+    from ..models import ReceitaHistorica, FolhaMensal
+    from sqlalchemy import and_
+
+    ano = int(payload.get("ano", 2025))
+    cliente_ids_filtro = payload.get("cliente_ids")
+
+    q = select(Cliente).where(
+        Cliente.escritorio_id == escritorio.id,
+        Cliente.ativo == True,
+    )
+    if cliente_ids_filtro:
+        q = q.where(Cliente.id.in_(cliente_ids_filtro))
+
+    result = await db.execute(q)
+    clientes = result.scalars().all()
+
+    resultados = []
+    for cliente in clientes:
+        item = {"cliente_id": cliente.id, "razao_social": cliente.razao_social, "pgdas": None, "esocial": None, "erro": None}
+        try:
+            cert_pem, key_pem, erro = await _carregar_certificado(cliente, "nfse")
+            if erro:
+                cert_pem, key_pem, erro = await _carregar_certificado(cliente, "nfe")
+            if erro:
+                item["erro"] = f"Certificado: {erro}"
+                resultados.append(item)
+                continue
+
+            if await _playwright_disponivel():
+                try:
+                    res_pgdas = await _run_playwright(
+                        cert_pem, key_pem,
+                        "https://www8.receita.fazenda.gov.br",
+                        lambda page, ctx: _tarefa_pgdas(page, ctx, cliente.cnpj, ano),
+                    )
+                    for rec in res_pgdas.get("receitas", []):
+                        from ..routers.apuracao_router import _upsert_receita_historica
+                        try:
+                            existing = await db.execute(
+                                select(ReceitaHistorica).where(
+                                    ReceitaHistorica.cliente_id == cliente.id,
+                                    ReceitaHistorica.escritorio_id == escritorio.id,
+                                    ReceitaHistorica.competencia == rec["competencia"],
+                                )
+                            )
+                            ex = existing.scalar_one_or_none()
+                            if ex:
+                                ex.valor_receita = rec["valor_receita"]
+                                ex.origem = "pgdas_d"
+                            else:
+                                db.add(ReceitaHistorica(
+                                    escritorio_id=escritorio.id,
+                                    cliente_id=cliente.id,
+                                    competencia=rec["competencia"],
+                                    valor_receita=rec["valor_receita"],
+                                    origem="pgdas_d",
+                                ))
+                        except Exception:
+                            pass
+                    await db.commit()
+                    item["pgdas"] = {"competencias": len(res_pgdas.get("receitas", [])), "aviso": res_pgdas.get("aviso")}
+                except Exception as e:
+                    item["pgdas"] = {"erro": str(e)}
+
+                try:
+                    res_esocial = await _run_playwright(
+                        cert_pem, key_pem,
+                        "https://login.esocial.gov.br",
+                        lambda page, ctx: _tarefa_esocial(page, ctx, cliente.cnpj, ano),
+                    )
+                    for f in res_esocial.get("folhas", []):
+                        ex_r = await db.execute(
+                            select(FolhaMensal).where(
+                                FolhaMensal.cliente_id == cliente.id,
+                                FolhaMensal.escritorio_id == escritorio.id,
+                                FolhaMensal.competencia == f["competencia"],
+                            )
+                        )
+                        ex = ex_r.scalar_one_or_none()
+                        if ex:
+                            ex.valor_salarios = f["valor_total_folha"]
+                            ex.origem = "esocial"
+                        else:
+                            db.add(FolhaMensal(
+                                escritorio_id=escritorio.id,
+                                cliente_id=cliente.id,
+                                competencia=f["competencia"],
+                                valor_salarios=f["valor_total_folha"],
+                                valor_total=f["valor_total_folha"],
+                                origem="esocial",
+                            ))
+                    await db.commit()
+                    item["esocial"] = {"competencias": len(res_esocial.get("folhas", [])), "aviso": res_esocial.get("aviso")}
+                except Exception as e:
+                    item["esocial"] = {"erro": str(e)}
+        except Exception as e:
+            item["erro"] = str(e)
+        resultados.append(item)
+
+    total_pgdas = sum(1 for r in resultados if r.get("pgdas") and not r["pgdas"].get("erro"))
+    total_esocial = sum(1 for r in resultados if r.get("esocial") and not r["esocial"].get("erro"))
+    return {
+        "ano": ano,
+        "total_clientes": len(resultados),
+        "sucesso_pgdas": total_pgdas,
+        "sucesso_esocial": total_esocial,
+        "resultados": resultados,
+    }
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async def _carregar_certificado(cliente: Cliente, tipo: str, senha_override: str = ""):

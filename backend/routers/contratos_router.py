@@ -69,6 +69,10 @@ async def listar_contratos(
             "valor_deducoes": c.valor_deducoes,
             "valor_pis": c.valor_pis, "valor_cofins": c.valor_cofins,
             "valor_inss": c.valor_inss, "valor_ir": c.valor_ir, "valor_csll": c.valor_csll,
+            "is_construtora": c.is_construtora,
+            "obra_cei": c.obra_cei, "obra_art": c.obra_art,
+            "obra_alvara": c.obra_alvara, "obra_matricula": c.obra_matricula,
+            "obra_endereco": c.obra_endereco, "obra_inss_aliquota": c.obra_inss_aliquota,
             "criado_em": c.criado_em.isoformat() if c.criado_em else None,
         })
     return result
@@ -122,6 +126,13 @@ async def criar_contrato(
         dia_emissao=dia,
         modo_emissao=payload.get("modo_emissao", ModoEmissaoEnum.fila),
         gerar_boleto=bool(payload.get("gerar_boleto", False)),
+        is_construtora=bool(payload.get("is_construtora", False)),
+        obra_cei=payload.get("obra_cei"),
+        obra_art=payload.get("obra_art"),
+        obra_alvara=payload.get("obra_alvara"),
+        obra_matricula=payload.get("obra_matricula"),
+        obra_endereco=payload.get("obra_endereco"),
+        obra_inss_aliquota=float(payload.get("obra_inss_aliquota", 0)),
         ativo=True,
         total_emitido=0,
     )
@@ -147,6 +158,8 @@ async def atualizar_contrato(
         "tomador_logradouro", "tomador_numero", "tomador_bairro",
         "tomador_municipio", "tomador_codigo_ibge", "tomador_uf", "tomador_cep",
         "valor_deducoes", "valor_pis", "valor_cofins", "valor_inss", "valor_ir", "valor_csll",
+        "is_construtora", "obra_cei", "obra_art", "obra_alvara",
+        "obra_matricula", "obra_endereco", "obra_inss_aliquota",
     ]
     for campo in campos:
         if campo in payload and payload[campo] is not None:
