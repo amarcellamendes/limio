@@ -904,7 +904,6 @@ async def _tarefa_ecac_faturamento(page, context, cnpj: str, ano: int) -> dict:
         )
     )
     return {"receitas": receitas, "aviso": aviso}
-    }
 
 
 # ─── Consulta automática de certidões ────────────────────────────────────────
