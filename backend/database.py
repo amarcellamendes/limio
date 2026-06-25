@@ -16,6 +16,10 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db():
+    import os
+    from .config import settings
+    os.makedirs(settings.DATA_DIR, exist_ok=True)
+    os.makedirs(os.path.join(settings.DATA_DIR, "certs"), exist_ok=True)
     async with engine.begin() as conn:
         from . import models  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
@@ -35,7 +39,13 @@ def _migrate_sqlite(conn):
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}"))
 
     # Escritório — novos campos
-    add_col("escritorios", "nfeio_api_key", "VARCHAR(200)")
+    add_col("escritorios", "nfeio_api_key",        "VARCHAR(200)")
+    add_col("escritorios", "nota_enviar_email",     "BOOLEAN DEFAULT 0")
+    add_col("escritorios", "nota_pasta_destino",    "VARCHAR(500)")
+    add_col("escritorios", "smtp_host",             "VARCHAR(200)")
+    add_col("escritorios", "smtp_port",             "INTEGER DEFAULT 587")
+    add_col("escritorios", "smtp_usuario",          "VARCHAR(200)")
+    add_col("escritorios", "smtp_senha",            "VARCHAR(200)")
 
     # Clientes — novos campos
     add_col("clientes", "emite_nfse",              "BOOLEAN DEFAULT 1")

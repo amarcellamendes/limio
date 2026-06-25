@@ -1,6 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+import smtplib
+import asyncio
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from typing import Optional
+from pydantic import BaseModel
 
 from ..database import get_db
 from ..models import Escritorio, Usuario, PlanoEnum
@@ -9,6 +15,19 @@ from ..auth import (
     hash_senha, verificar_senha, criar_token,
     get_usuario_atual, get_escritorio_atual, LIMITES_PLANO,
 )
+
+
+class EscritorioUpdate(BaseModel):
+    nome: Optional[str] = None
+    email: Optional[str] = None
+    telefone: Optional[str] = None
+    crc: Optional[str] = None
+    nota_enviar_email: Optional[bool] = None
+    nota_pasta_destino: Optional[str] = None
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_usuario: Optional[str] = None
+    smtp_senha: Optional[str] = None
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -99,3 +118,80 @@ async def me(
     escritorio: Escritorio = Depends(get_escritorio_atual),
 ):
     return escritorio
+
+
+@router.get("/me/configuracoes")
+async def get_configuracoes(
+    escritorio: Escritorio = Depends(get_escritorio_atual),
+):
+    return {
+        "nome": escritorio.nome,
+        "email": escritorio.email,
+        "telefone": escritorio.telefone,
+        "crc": escritorio.crc,
+        "nota_enviar_email": getattr(escritorio, "nota_enviar_email", False),
+        "nota_pasta_destino": getattr(escritorio, "nota_pasta_destino", None),
+        "smtp_host": getattr(escritorio, "smtp_host", None),
+        "smtp_port": getattr(escritorio, "smtp_port", 587),
+        "smtp_usuario": getattr(escritorio, "smtp_usuario", None),
+        "smtp_senha_configurada": bool(getattr(escritorio, "smtp_senha", None)),
+    }
+
+
+@router.put("/me/configuracoes")
+async def salvar_configuracoes(
+    payload: EscritorioUpdate,
+    escritorio: Escritorio = Depends(get_escritorio_atual),
+    db: AsyncSession = Depends(get_db),
+):
+    for campo, valor in payload.model_dump(exclude_none=True).items():
+        setattr(escritorio, campo, valor)
+    await db.commit()
+    return {"ok": True}
+
+
+def _enviar_email_sync(host: str, port: int, usuario: str, senha: str,
+                        destinatario: str, assunto: str, corpo: str):
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = assunto
+    msg["From"] = usuario
+    msg["To"] = destinatario
+    msg.attach(MIMEText(corpo, "html"))
+    with smtplib.SMTP(host, port, timeout=10) as s:
+        s.starttls()
+        s.login(usuario, senha)
+        s.sendmail(usuario, destinatario, msg.as_string())
+
+
+async def enviar_email(host: str, port: int, usuario: str, senha: str,
+                       destinatario: str, assunto: str, corpo: str):
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None, _enviar_email_sync, host, port, usuario, senha, destinatario, assunto, corpo
+    )
+
+
+@router.post("/me/testar-smtp")
+async def testar_smtp(
+    escritorio: Escritorio = Depends(get_escritorio_atual),
+):
+    host = getattr(escritorio, "smtp_host", None)
+    porta = getattr(escritorio, "smtp_port", 587) or 587
+    usuario = getattr(escritorio, "smtp_usuario", None)
+    senha = getattr(escritorio, "smtp_senha", None)
+
+    if not all([host, usuario, senha]):
+        raise HTTPException(400, "Configure o servidor SMTP antes de testar.")
+
+    try:
+        await enviar_email(
+            host=host, port=porta, usuario=usuario, senha=senha,
+            destinatario=usuario,
+            assunto=f"Limio — Teste de configuração SMTP de {escritorio.nome}",
+            corpo=f"<p>Olá! Este é um e-mail de teste enviado pelo <strong>Limio</strong>.</p>"
+                  f"<p>As configurações SMTP do escritório <strong>{escritorio.nome}</strong> estão funcionando corretamente.</p>",
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Erro ao enviar e-mail: {str(e)}")
+
+    return {"ok": True}

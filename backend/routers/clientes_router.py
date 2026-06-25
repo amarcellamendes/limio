@@ -1,13 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import List
+import os
 
 from ..database import get_db
 from ..models import Cliente, Escritorio, Nota, StatusNotaEnum
 from ..schemas import ClienteCreate, ClienteUpdate, ClienteResponse
 from ..auth import get_usuario_atual, get_escritorio_atual
 from ..models import Usuario
+from ..config import settings
 
 router = APIRouter(prefix="/api/clientes", tags=["clientes"])
 
@@ -114,6 +116,41 @@ async def resumo_cliente(
         "notas_emitidas": emitidas.scalar() or 0,
         "valor_total_emitido": valor.scalar() or 0.0,
     }
+
+
+@router.post("/{cliente_id}/certificado/{tipo}")
+async def upload_certificado(
+    cliente_id: int,
+    tipo: str,
+    arquivo: UploadFile = File(...),
+    escritorio: Escritorio = Depends(get_escritorio_atual),
+    db: AsyncSession = Depends(get_db),
+):
+    """Faz upload de certificado A1 (.pfx) para NFS-e ou NF-e."""
+    if tipo not in ("nfse", "nfe"):
+        raise HTTPException(400, "Tipo deve ser 'nfse' ou 'nfe'.")
+    if not arquivo.filename.lower().endswith(".pfx"):
+        raise HTTPException(400, "Apenas arquivos .pfx são aceitos.")
+
+    cliente = await _get_cliente_ou_404(cliente_id, escritorio.id, db)
+
+    pasta = os.path.join(settings.DATA_DIR, "certs", str(escritorio.id), str(cliente_id))
+    os.makedirs(pasta, exist_ok=True)
+
+    nome = f"{tipo}_cert.pfx"
+    caminho = os.path.join(pasta, nome)
+
+    conteudo = await arquivo.read()
+    with open(caminho, "wb") as f:
+        f.write(conteudo)
+
+    if tipo == "nfse":
+        cliente.nfse_certificado_path = caminho
+    else:
+        cliente.nfe_certificado_path = caminho
+
+    await db.commit()
+    return {"ok": True, "caminho": caminho, "nome": nome, "tamanho": len(conteudo)}
 
 
 async def _get_cliente_ou_404(

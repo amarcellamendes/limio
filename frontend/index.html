@@ -322,6 +322,38 @@
           <p class="text-xs text-gray-400 mt-1"><span x-text="dash?.percentual_uso?.toFixed(1)"></span>% utilizado</p>
         </div>
 
+        <!-- Radar Simples Nacional -->
+        <div x-show="rankingSimples && rankingSimples.length > 0" class="card mb-6">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="font-semibold text-primary">Radar Simples Nacional</h3>
+              <p class="text-xs text-gray-400">Faturamento acumulado no ano vs. limite R$ 4,8M</p>
+            </div>
+            <button @click="goto('apuracao')" class="text-accent text-sm hover:underline">Ver apuração →</button>
+          </div>
+          <div class="space-y-2.5">
+            <template x-for="c in rankingSimples.slice(0,10)" :key="c.cliente_id">
+              <div class="flex items-center gap-3 cursor-pointer hover:bg-gray-50 rounded-lg px-2 py-1.5 -mx-2 transition-colors"
+                   @click="apuracao.clienteId = c.cliente_id; goto('apuracao')">
+                <div class="w-36 shrink-0">
+                  <p class="text-sm font-medium text-gray-800 truncate" x-text="c.nome_fantasia || c.razao_social"></p>
+                  <p class="text-xs text-gray-400" x-text="c.anexo ? 'Anexo ' + c.anexo : 'Simples Nacional'"></p>
+                </div>
+                <div class="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div class="h-full rounded-full transition-all duration-700"
+                       :class="c.perigo ? 'bg-red-500' : c.alerta ? 'bg-amber-400' : 'bg-accent'"
+                       :style="`width:${c.pct}%`"></div>
+                </div>
+                <span class="w-12 text-right text-sm font-bold shrink-0"
+                      :class="c.perigo ? 'text-red-600' : c.alerta ? 'text-amber-600' : 'text-gray-600'"
+                      x-text="c.pct + '%'"></span>
+                <span x-show="c.perigo" class="text-xs bg-red-100 text-red-700 rounded px-1.5 py-0.5 shrink-0">Perigo</span>
+                <span x-show="!c.perigo && c.alerta" class="text-xs bg-amber-100 text-amber-700 rounded px-1.5 py-0.5 shrink-0">Atenção</span>
+              </div>
+            </template>
+          </div>
+        </div>
+
         <!-- Últimas notas -->
         <div class="card">
           <div class="flex items-center justify-between mb-4">
@@ -1577,6 +1609,62 @@
           </div>
         </div>
 
+        <!-- Entrega de Notas -->
+        <div class="card">
+          <h3 class="font-semibold text-primary mb-1">Entrega de Notas ao Cliente</h3>
+          <p class="text-xs text-gray-500 mb-4">Ação automática após cada nota emitida</p>
+          <div class="space-y-4">
+            <!-- Envio por e-mail -->
+            <div class="flex items-start gap-3">
+              <input type="checkbox" id="nota_enviar_email" x-model="configForm.nota_enviar_email" class="mt-1 w-4 h-4 accent-accent" />
+              <div>
+                <label for="nota_enviar_email" class="text-sm font-medium text-gray-700 cursor-pointer">Enviar PDF da nota por e-mail para o cliente</label>
+                <p class="text-xs text-gray-400">O PDF será enviado automaticamente para o e-mail cadastrado no cliente.</p>
+              </div>
+            </div>
+            <div x-show="configForm.nota_enviar_email" class="pl-7 border-l-2 border-accent/30 space-y-3">
+              <p class="text-xs font-semibold text-gray-600 uppercase tracking-wide">Configuração SMTP (servidor de e-mail)</p>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="label">Servidor SMTP</label>
+                  <input type="text" x-model="configForm.smtp_host" class="input" placeholder="smtp.gmail.com" />
+                </div>
+                <div>
+                  <label class="label">Porta</label>
+                  <input type="number" x-model.number="configForm.smtp_port" class="input" placeholder="587" />
+                </div>
+                <div>
+                  <label class="label">Usuário (e-mail remetente)</label>
+                  <input type="email" x-model="configForm.smtp_usuario" class="input" placeholder="noreply@seuescritorio.com.br" />
+                </div>
+                <div>
+                  <label class="label">Senha / App password</label>
+                  <input type="password" x-model="configForm.smtp_senha" class="input" placeholder="Senha ou App Password do Gmail" />
+                  <p class="text-xs text-gray-400 mt-1">Gmail: use App Password em <strong>Minha Conta → Segurança → Senhas de app</strong></p>
+                </div>
+              </div>
+              <button class="btn-secondary text-xs" @click="testarSmtp()">Enviar e-mail de teste</button>
+            </div>
+
+            <!-- Salvar em pasta -->
+            <div class="flex items-start gap-3 border-t pt-4">
+              <input type="checkbox" id="nota_salvar_pasta" x-model="configForm.nota_salvar_pasta" class="mt-1 w-4 h-4 accent-accent" />
+              <div class="flex-1">
+                <label for="nota_salvar_pasta" class="text-sm font-medium text-gray-700 cursor-pointer">Salvar PDF em pasta específica no servidor</label>
+                <p class="text-xs text-gray-400">Requer volume de armazenamento configurado no servidor.</p>
+              </div>
+            </div>
+            <div x-show="configForm.nota_salvar_pasta" class="pl-7 border-l-2 border-accent/30">
+              <label class="label">Caminho da pasta</label>
+              <input type="text" x-model="configForm.nota_pasta_destino" class="input" placeholder="/data/notas/{cliente}/{ano}/{mes}/" />
+              <p class="text-xs text-gray-400 mt-1">Use <code>{cliente}</code>, <code>{ano}</code>, <code>{mes}</code> como variáveis dinâmicas.</p>
+            </div>
+          </div>
+          <div class="mt-4">
+            <button class="btn-primary" @click="salvarConfiguracoes()">Salvar configurações de entrega</button>
+          </div>
+        </div>
+
         <div class="card">
           <h3 class="font-semibold text-primary mb-2">Plano Atual</h3>
           <div class="flex items-center justify-between">
@@ -2513,9 +2601,23 @@
               <div x-show="clienteForm.nfse_provider === 'nacional'" class="col-span-2 border-t border-blue-200 pt-3 mt-1">
                 <p class="text-xs font-bold text-blue-700 mb-2">Certificado Digital A1 — NFS-e Nacional</p>
                 <div class="grid grid-cols-2 gap-3">
-                  <div>
-                    <label class="label">Caminho do certificado (.pfx)</label>
-                    <input type="text" x-model="clienteForm.nfse_certificado_path" class="input" placeholder="/data/certs/empresa.pfx" />
+                  <div class="col-span-2">
+                    <label class="label">Arquivo do certificado (.pfx)</label>
+                    <div class="flex items-center gap-3 mt-1">
+                      <div class="flex-1">
+                        <template x-if="!clienteForm.nfse_certificado_path">
+                          <span class="text-xs text-gray-400">Nenhum certificado carregado</span>
+                        </template>
+                        <template x-if="clienteForm.nfse_certificado_path">
+                          <span class="text-xs text-green-600 font-medium">✓ <span x-text="clienteForm.nfse_certificado_path.split(/[\\/]/).pop()"></span></span>
+                        </template>
+                      </div>
+                      <label class="btn-secondary text-xs cursor-pointer px-3 py-1.5" :class="uploadingCert.nfse ? 'opacity-60' : ''">
+                        <span x-text="uploadingCert.nfse ? 'Carregando...' : (clienteForm.nfse_certificado_path ? 'Substituir arquivo' : 'Escolher arquivo (.pfx)')"></span>
+                        <input type="file" accept=".pfx" class="hidden" @change="uploadCertificado($event,'nfse')" :disabled="uploadingCert.nfse" />
+                      </label>
+                    </div>
+                    <p x-show="!clienteForm.id" class="text-xs text-amber-600 mt-1">Salve o cliente primeiro para fazer upload do certificado.</p>
                   </div>
                   <div>
                     <label class="label">Senha do certificado</label>
@@ -2563,9 +2665,23 @@
               <div x-show="clienteForm.nfe_provider === 'sefaz' || clienteForm.nfe_provider === 'nfeio'" class="col-span-2 border-t border-purple-200 pt-3 mt-1">
                 <p class="text-xs font-bold text-purple-700 mb-2">Certificado Digital A1 — NF-e</p>
                 <div class="grid grid-cols-2 gap-3">
-                  <div>
-                    <label class="label">Caminho do certificado (.pfx)</label>
-                    <input type="text" x-model="clienteForm.nfe_certificado_path" class="input" placeholder="/data/certs/empresa-nfe.pfx" />
+                  <div class="col-span-2">
+                    <label class="label">Arquivo do certificado (.pfx)</label>
+                    <div class="flex items-center gap-3 mt-1">
+                      <div class="flex-1">
+                        <template x-if="!clienteForm.nfe_certificado_path">
+                          <span class="text-xs text-gray-400">Nenhum certificado carregado</span>
+                        </template>
+                        <template x-if="clienteForm.nfe_certificado_path">
+                          <span class="text-xs text-green-600 font-medium">✓ <span x-text="clienteForm.nfe_certificado_path.split(/[\\/]/).pop()"></span></span>
+                        </template>
+                      </div>
+                      <label class="btn-secondary text-xs cursor-pointer px-3 py-1.5" :class="uploadingCert.nfe ? 'opacity-60' : ''">
+                        <span x-text="uploadingCert.nfe ? 'Carregando...' : (clienteForm.nfe_certificado_path ? 'Substituir arquivo' : 'Escolher arquivo (.pfx)')"></span>
+                        <input type="file" accept=".pfx" class="hidden" @change="uploadCertificado($event,'nfe')" :disabled="uploadingCert.nfe" />
+                      </label>
+                    </div>
+                    <p x-show="!clienteForm.id" class="text-xs text-amber-600 mt-1">Salve o cliente primeiro para fazer upload do certificado.</p>
                   </div>
                   <div>
                     <label class="label">Senha do certificado</label>
@@ -2651,9 +2767,12 @@ function app() {
 
     // Dados
     dash: null,
+    rankingSimples: [],
     notas: [],
     clientes: [],
     filtros: { tipo:'', status:'', competencia:'', cliente_id:'' },
+    uploadingCert: { nfse: false, nfe: false },
+    configForm: { nome:'', email:'', telefone:'', crc:'', nota_enviar_email:false, nota_salvar_pasta:false, nota_pasta_destino:'', smtp_host:'', smtp_port:587, smtp_usuario:'', smtp_senha:'' },
 
     // Calendário Fiscal
     calAno: new Date().getFullYear(),
@@ -2767,6 +2886,42 @@ function app() {
       if (p === 'recebidas') { this.carregarRecebidos(); this.carregarDashRecebidos() }
       if (p === 'calendario') { this.carregarCalendario(); this.carregarProximos() }
       if (p === 'contratos') this.carregarContratos()
+      if (p === 'configuracoes') this.carregarConfiguracoes()
+    },
+
+    async carregarConfiguracoes() {
+      const r = await this._fetch(`${API}/auth/me/configuracoes`)
+      if (r?.ok) {
+        const d = await r.json()
+        this.configForm = { ...this.configForm, ...d, nota_salvar_pasta: !!d.nota_pasta_destino, smtp_senha: '' }
+      }
+    },
+
+    async salvarConfiguracoes() {
+      const payload = {
+        nome: this.configForm.nome,
+        email: this.configForm.email,
+        telefone: this.configForm.telefone,
+        crc: this.configForm.crc,
+        nota_enviar_email: this.configForm.nota_enviar_email,
+        nota_pasta_destino: this.configForm.nota_salvar_pasta ? this.configForm.nota_pasta_destino : null,
+        smtp_host: this.configForm.smtp_host || null,
+        smtp_port: this.configForm.smtp_port || 587,
+        smtp_usuario: this.configForm.smtp_usuario || null,
+      }
+      if (this.configForm.smtp_senha) payload.smtp_senha = this.configForm.smtp_senha
+      const r = await this._fetch(`${API}/auth/me/configuracoes`, { method:'PUT', body: JSON.stringify(payload) })
+      if (r?.ok) this.showToast('Configurações salvas!')
+      else this.showToast('Erro ao salvar configurações.', 'error')
+    },
+
+    async testarSmtp() {
+      const r = await this._fetch(`${API}/auth/me/testar-smtp`, { method:'POST' })
+      if (r?.ok) this.showToast('E-mail de teste enviado! Verifique a caixa de entrada.')
+      else {
+        const d = await r?.json().catch(() => ({}))
+        this.showToast(d.detail || 'Erro ao enviar e-mail de teste. Verifique as configurações SMTP.', 'error')
+      }
     },
 
     // ─── AUTH ──────────────────────────────────────────
@@ -2830,9 +2985,47 @@ function app() {
     async carregarDashboard() {
       this.loadingPage = true
       try {
-        const r = await this._fetch(`${API}/notas/dashboard`)
+        const [r, rr] = await Promise.all([
+          this._fetch(`${API}/notas/dashboard`),
+          this._fetch(`${API}/apuracao/ranking-simples`),
+        ])
         if (r?.ok) this.dash = await r.json()
+        if (rr?.ok) this.rankingSimples = await rr.json()
       } finally { this.loadingPage = false }
+    },
+
+    async uploadCertificado(event, tipo) {
+      const file = event.target.files[0]
+      if (!file) return
+      if (!this.clienteForm.id) {
+        this.showToast('Salve o cliente antes de carregar o certificado.', 'error')
+        event.target.value = ''
+        return
+      }
+      this.uploadingCert[tipo] = true
+      try {
+        const fd = new FormData()
+        fd.append('arquivo', file)
+        const r = await fetch(`${API}/clientes/${this.clienteForm.id}/certificado/${tipo}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${this.token}` },
+          body: fd,
+        })
+        if (r.ok) {
+          const d = await r.json()
+          if (tipo === 'nfse') this.clienteForm.nfse_certificado_path = d.caminho
+          else this.clienteForm.nfe_certificado_path = d.caminho
+          this.showToast('Certificado carregado com sucesso!')
+        } else {
+          const err = await r.json().catch(() => ({}))
+          this.showToast(err.detail || 'Erro ao carregar certificado.', 'error')
+        }
+      } catch (e) {
+        this.showToast('Erro ao carregar certificado.', 'error')
+      } finally {
+        this.uploadingCert[tipo] = false
+        event.target.value = ''
+      }
     },
 
     // ─── NOTAS ─────────────────────────────────────────

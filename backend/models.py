@@ -75,6 +75,14 @@ class Escritorio(Base):
     # NFe.io — chave global do escritório (Company ID fica em cada Cliente)
     nfeio_api_key: Mapped[Optional[str]] = mapped_column(String(200))
 
+    # Entrega de nota ao cliente
+    nota_enviar_email: Mapped[bool] = mapped_column(Boolean, default=False)
+    nota_pasta_destino: Mapped[Optional[str]] = mapped_column(String(500))
+    smtp_host: Mapped[Optional[str]] = mapped_column(String(200))
+    smtp_port: Mapped[int] = mapped_column(Integer, default=587)
+    smtp_usuario: Mapped[Optional[str]] = mapped_column(String(200))
+    smtp_senha: Mapped[Optional[str]] = mapped_column(String(200))
+
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     criado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     atualizado_em: Mapped[datetime] = mapped_column(

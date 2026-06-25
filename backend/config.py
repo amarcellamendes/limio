@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # NF-e SEFAZ (produtos — modelo 55)
     NFE_AMBIENTE: str = "2"  # 1=producao, 2=homologacao
 
+    # Diretório persistente de dados (certificados, banco etc.)
+    DATA_DIR: str = "./data"
+
     # Modo mock (True = não chama APIs reais, gera dados simulados)
     MOCK_MODE: bool = True
 

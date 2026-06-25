@@ -83,12 +83,14 @@ TABELAS_SIMPLES = {
 }
 
 DARF_CODIGOS = {
-    "pis":    {"codigo": "6912", "descricao": "PIS/Pasep — Retenção sobre serviços",   "venc": "último dia útil do mês"},
-    "cofins": {"codigo": "5856", "descricao": "COFINS — Retenção sobre serviços",      "venc": "último dia útil do mês"},
-    "inss":   {"codigo": "2240", "descricao": "INSS — Contribuição Retida",            "venc": "dia 20 do mês seguinte"},
-    "ir":     {"codigo": "0588", "descricao": "IRRF — Rendimentos do Trabalho PJ",    "venc": "último dia útil do mês"},
-    "csll":   {"codigo": "3047", "descricao": "CSLL — Retenção na Fonte",              "venc": "último dia útil do mês"},
-    "das":    {"codigo": "DAS",  "descricao": "DAS — Documento de Arrecadação Simples","venc": "dia 20 do mês seguinte"},
+    "pis":    {"codigo": "6912", "descricao": "PIS/Pasep — Retenção sobre serviços",             "venc": "dia 25 do mês seguinte"},
+    "cofins": {"codigo": "5856", "descricao": "COFINS — Retenção sobre serviços",                "venc": "dia 25 do mês seguinte"},
+    "inss":   {"codigo": "2240", "descricao": "INSS — Contribuição Retida (cessão mão de obra)", "venc": "dia 20 do mês seguinte"},
+    "ir":     {"codigo": "0588", "descricao": "IRRF — Rendimentos do Trabalho / PJ",             "venc": "dia 20 do mês seguinte"},
+    "csll":   {"codigo": "3047", "descricao": "CSLL — Retenção na Fonte",                        "venc": "dia 20 do mês seguinte"},
+    "das":    {"codigo": "DAS",  "descricao": "DAS — Documento de Arrecadação Simples",          "venc": "dia 20 do mês seguinte"},
+    "icms":   {"codigo": "ICMS", "descricao": "ICMS — Mercadorias (Simples: incluso no DAS)",    "venc": "varia por estado — consulte SEFAZ estadual"},
+    "gps":    {"codigo": "GPS",  "descricao": "GPS — INSS Patronal (Anexo IV fora do DAS)",      "venc": "dia 20 do mês seguinte"},
 }
 
 
@@ -574,3 +576,52 @@ async def status_simples(
         "alerta": pct >= 80,
         "perigo": pct >= 95,
     }
+
+
+# ---------------------------------------------------------------------------
+# Ranking Simples Nacional (para dashboard)
+# ---------------------------------------------------------------------------
+
+@router.get("/api/apuracao/ranking-simples")
+async def ranking_simples(
+    escritorio: Escritorio = Depends(get_escritorio_atual),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retorna todos os clientes Simples ordenados pelo % do limite anual atingido."""
+    clientes_r = await db.execute(
+        select(Cliente).where(
+            Cliente.escritorio_id == escritorio.id,
+            Cliente.ativo == True,
+            Cliente.optante_simples == True,
+        ).order_by(Cliente.razao_social)
+    )
+    clientes = clientes_r.scalars().all()
+
+    ano = date.today().year
+    ranking = []
+    for c in clientes:
+        r = await db.execute(
+            select(func.sum(Nota.valor_servico)).where(
+                Nota.escritorio_id == escritorio.id,
+                Nota.cliente_id == c.id,
+                Nota.status == StatusNotaEnum.emitida,
+                Nota.data_competencia.like(f"{ano}-%"),
+            )
+        )
+        receita = r.scalar() or 0.0
+        limite = c.limite_simples or 4_800_000.0
+        pct = round(min(receita / limite * 100, 100), 1) if limite > 0 else 0.0
+        ranking.append({
+            "cliente_id": c.id,
+            "razao_social": c.razao_social,
+            "nome_fantasia": c.nome_fantasia,
+            "receita_ano": round(receita, 2),
+            "limite": limite,
+            "pct": pct,
+            "alerta": pct >= 70,
+            "perigo": pct >= 90,
+            "anexo": c.anexo_simples,
+        })
+
+    ranking.sort(key=lambda x: x["pct"], reverse=True)
+    return ranking
