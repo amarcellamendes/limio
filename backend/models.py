@@ -68,7 +68,7 @@ class Escritorio(Base):
     plano: Mapped[PlanoEnum] = mapped_column(
         SAEnum(PlanoEnum), default=PlanoEnum.free
     )
-    limite_notas_mes: Mapped[int] = mapped_column(Integer, default=10)
+    limite_notas_mes: Mapped[int] = mapped_column(Integer, default=2)
     notas_emitidas_mes: Mapped[int] = mapped_column(Integer, default=0)
     mes_referencia: Mapped[Optional[str]] = mapped_column(String(7))  # YYYY-MM
 

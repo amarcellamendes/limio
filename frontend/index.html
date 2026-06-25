@@ -2605,19 +2605,21 @@
                     <label class="label">Arquivo do certificado (.pfx)</label>
                     <div class="flex items-center gap-3 mt-1">
                       <div class="flex-1">
-                        <template x-if="!clienteForm.nfse_certificado_path">
-                          <span class="text-xs text-gray-400">Nenhum certificado carregado</span>
+                        <template x-if="pendingCertNames.nfse">
+                          <span class="text-xs text-blue-600 font-medium">📎 <span x-text="pendingCertNames.nfse"></span> <span class="text-gray-400">(será salvo junto com o cliente)</span></span>
                         </template>
-                        <template x-if="clienteForm.nfse_certificado_path">
+                        <template x-if="!pendingCertNames.nfse && clienteForm.nfse_certificado_path">
                           <span class="text-xs text-green-600 font-medium">✓ <span x-text="clienteForm.nfse_certificado_path.split(/[\\/]/).pop()"></span></span>
                         </template>
+                        <template x-if="!pendingCertNames.nfse && !clienteForm.nfse_certificado_path">
+                          <span class="text-xs text-gray-400">Nenhum certificado selecionado</span>
+                        </template>
                       </div>
-                      <label class="btn-secondary text-xs cursor-pointer px-3 py-1.5" :class="uploadingCert.nfse ? 'opacity-60' : ''">
-                        <span x-text="uploadingCert.nfse ? 'Carregando...' : (clienteForm.nfse_certificado_path ? 'Substituir arquivo' : 'Escolher arquivo (.pfx)')"></span>
-                        <input type="file" accept=".pfx" class="hidden" @change="uploadCertificado($event,'nfse')" :disabled="uploadingCert.nfse" />
+                      <label class="btn-secondary text-xs cursor-pointer px-3 py-1.5">
+                        <span x-text="pendingCertNames.nfse ? 'Trocar arquivo' : (clienteForm.nfse_certificado_path ? 'Substituir' : 'Escolher arquivo (.pfx)')"></span>
+                        <input type="file" accept=".pfx" class="hidden" @change="selecionarCertificado($event,'nfse')" />
                       </label>
                     </div>
-                    <p x-show="!clienteForm.id" class="text-xs text-amber-600 mt-1">Salve o cliente primeiro para fazer upload do certificado.</p>
                   </div>
                   <div>
                     <label class="label">Senha do certificado</label>
@@ -2669,19 +2671,21 @@
                     <label class="label">Arquivo do certificado (.pfx)</label>
                     <div class="flex items-center gap-3 mt-1">
                       <div class="flex-1">
-                        <template x-if="!clienteForm.nfe_certificado_path">
-                          <span class="text-xs text-gray-400">Nenhum certificado carregado</span>
+                        <template x-if="pendingCertNames.nfe">
+                          <span class="text-xs text-blue-600 font-medium">📎 <span x-text="pendingCertNames.nfe"></span> <span class="text-gray-400">(será salvo junto com o cliente)</span></span>
                         </template>
-                        <template x-if="clienteForm.nfe_certificado_path">
+                        <template x-if="!pendingCertNames.nfe && clienteForm.nfe_certificado_path">
                           <span class="text-xs text-green-600 font-medium">✓ <span x-text="clienteForm.nfe_certificado_path.split(/[\\/]/).pop()"></span></span>
                         </template>
+                        <template x-if="!pendingCertNames.nfe && !clienteForm.nfe_certificado_path">
+                          <span class="text-xs text-gray-400">Nenhum certificado selecionado</span>
+                        </template>
                       </div>
-                      <label class="btn-secondary text-xs cursor-pointer px-3 py-1.5" :class="uploadingCert.nfe ? 'opacity-60' : ''">
-                        <span x-text="uploadingCert.nfe ? 'Carregando...' : (clienteForm.nfe_certificado_path ? 'Substituir arquivo' : 'Escolher arquivo (.pfx)')"></span>
-                        <input type="file" accept=".pfx" class="hidden" @change="uploadCertificado($event,'nfe')" :disabled="uploadingCert.nfe" />
+                      <label class="btn-secondary text-xs cursor-pointer px-3 py-1.5">
+                        <span x-text="pendingCertNames.nfe ? 'Trocar arquivo' : (clienteForm.nfe_certificado_path ? 'Substituir' : 'Escolher arquivo (.pfx)')"></span>
+                        <input type="file" accept=".pfx" class="hidden" @change="selecionarCertificado($event,'nfe')" />
                       </label>
                     </div>
-                    <p x-show="!clienteForm.id" class="text-xs text-amber-600 mt-1">Salve o cliente primeiro para fazer upload do certificado.</p>
                   </div>
                   <div>
                     <label class="label">Senha do certificado</label>
@@ -2772,6 +2776,8 @@ function app() {
     clientes: [],
     filtros: { tipo:'', status:'', competencia:'', cliente_id:'' },
     uploadingCert: { nfse: false, nfe: false },
+    pendingCerts: { nfse: null, nfe: null },
+    pendingCertNames: { nfse: '', nfe: '' },
     configForm: { nome:'', email:'', telefone:'', crc:'', nota_enviar_email:false, nota_salvar_pasta:false, nota_pasta_destino:'', smtp_host:'', smtp_port:587, smtp_usuario:'', smtp_senha:'' },
 
     // Calendário Fiscal
@@ -2994,19 +3000,21 @@ function app() {
       } finally { this.loadingPage = false }
     },
 
-    async uploadCertificado(event, tipo) {
+    selecionarCertificado(event, tipo) {
       const file = event.target.files[0]
       if (!file) return
-      if (!this.clienteForm.id) {
-        this.showToast('Salve o cliente antes de carregar o certificado.', 'error')
-        event.target.value = ''
-        return
-      }
+      this.pendingCerts[tipo] = file
+      this.pendingCertNames[tipo] = file.name
+    },
+
+    async uploadCertificado(clienteId, tipo) {
+      const file = this.pendingCerts[tipo]
+      if (!file) return
       this.uploadingCert[tipo] = true
       try {
         const fd = new FormData()
         fd.append('arquivo', file)
-        const r = await fetch(`${API}/clientes/${this.clienteForm.id}/certificado/${tipo}`, {
+        const r = await fetch(`${API}/clientes/${clienteId}/certificado/${tipo}`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${this.token}` },
           body: fd,
@@ -3015,16 +3023,11 @@ function app() {
           const d = await r.json()
           if (tipo === 'nfse') this.clienteForm.nfse_certificado_path = d.caminho
           else this.clienteForm.nfe_certificado_path = d.caminho
-          this.showToast('Certificado carregado com sucesso!')
-        } else {
-          const err = await r.json().catch(() => ({}))
-          this.showToast(err.detail || 'Erro ao carregar certificado.', 'error')
+          this.pendingCerts[tipo] = null
+          this.pendingCertNames[tipo] = ''
         }
-      } catch (e) {
-        this.showToast('Erro ao carregar certificado.', 'error')
       } finally {
         this.uploadingCert[tipo] = false
-        event.target.value = ''
       }
     },
 
@@ -3273,6 +3276,8 @@ function app() {
 
     abrirModalCliente(c) {
       this.modalCliente.erro = ''
+      this.pendingCerts = { nfse: null, nfe: null }
+      this.pendingCertNames = { nfse: '', nfe: '' }
       if (c) {
         this.modalCliente.editando = true; this.modalCliente.id = c.id
         this.clienteForm = {
@@ -3337,7 +3342,18 @@ function app() {
         const method = this.modalCliente.editando ? 'PUT' : 'POST'
         const r = await this._fetch(url, { method, body: JSON.stringify(this.clienteForm) })
         const d = await r.json()
-        if (!r.ok) throw new Error(d.detail || 'Erro ao salvar cliente.')
+        if (!r.ok) {
+          const detail = d.detail
+          throw new Error(Array.isArray(detail)
+            ? detail.map(e => e.msg || JSON.stringify(e)).join(' | ')
+            : (detail || 'Erro ao salvar cliente.'))
+        }
+        const clienteId = d.id
+        // Upload de certificados pendentes logo após salvar
+        const uploads = []
+        if (this.pendingCerts.nfse) uploads.push(this.uploadCertificado(clienteId, 'nfse'))
+        if (this.pendingCerts.nfe)  uploads.push(this.uploadCertificado(clienteId, 'nfe'))
+        if (uploads.length) await Promise.all(uploads)
         this.modalCliente.show = false
         this.showToast(this.modalCliente.editando ? 'Cliente atualizado.' : 'Cliente cadastrado.')
         await this.carregarClientes()

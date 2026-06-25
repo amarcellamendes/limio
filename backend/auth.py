@@ -73,7 +73,7 @@ async def get_escritorio_atual(
 
 
 LIMITES_PLANO = {
-    "free": 10,
+    "free": 2,
     "starter": 100,
     "pro": 500,
     "enterprise": 999_999,
