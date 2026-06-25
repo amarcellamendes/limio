@@ -68,6 +68,9 @@ def _migrate_sqlite(conn):
     add_col("clientes", "anexo_simples",                "VARCHAR(10)")
     add_col("clientes", "atividade_permite_fator_r",    "BOOLEAN DEFAULT 0")
 
+    # Clientes — responsável (carteira)
+    add_col("clientes", "responsavel_id", "INTEGER REFERENCES usuarios(id)")
+
     # Cria tabelas novas se não existirem (create_all já faz isso, mas garantimos via migration)
     if "receita_historica" not in insp.get_table_names():
         conn.execute(text("""

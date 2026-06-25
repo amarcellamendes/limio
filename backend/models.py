@@ -184,6 +184,9 @@ class Cliente(Base):
     boleto_api_key: Mapped[Optional[str]] = mapped_column(String(200))
     boleto_dias_vencimento: Mapped[int] = mapped_column(Integer, default=3)  # dias após emissão
 
+    # Responsável (funcionário do escritório) — carteira de clientes
+    responsavel_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("usuarios.id"), nullable=True)
+
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     criado_em: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     atualizado_em: Mapped[datetime] = mapped_column(

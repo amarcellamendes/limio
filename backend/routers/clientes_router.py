@@ -9,7 +9,7 @@ from ..database import get_db
 from ..models import Cliente, Escritorio, Nota, StatusNotaEnum
 from ..schemas import ClienteCreate, ClienteUpdate, ClienteResponse
 from ..auth import get_usuario_atual, get_escritorio_atual
-from ..models import Usuario
+from ..models import Usuario, RoleEnum
 from ..config import settings
 
 router = APIRouter(prefix="/api/clientes", tags=["clientes"])
@@ -18,13 +18,17 @@ router = APIRouter(prefix="/api/clientes", tags=["clientes"])
 @router.get("", response_model=List[ClienteResponse])
 async def listar_clientes(
     escritorio: Escritorio = Depends(get_escritorio_atual),
+    usuario: Usuario = Depends(get_usuario_atual),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Cliente)
-        .where(Cliente.escritorio_id == escritorio.id, Cliente.ativo == True)
-        .order_by(Cliente.razao_social)
-    )
+    q = select(Cliente).where(Cliente.escritorio_id == escritorio.id, Cliente.ativo == True)
+    # Contadores só vêem sua carteira; admins vêem todos
+    is_admin = usuario.role == RoleEnum.admin or str(usuario.role) == "admin"
+    if not is_admin:
+        q = q.where(
+            (Cliente.responsavel_id == usuario.id) | (Cliente.responsavel_id == None)
+        )
+    result = await db.execute(q.order_by(Cliente.razao_social))
     return result.scalars().all()
 
 
