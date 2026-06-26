@@ -5182,7 +5182,8 @@ function app() {
         if (res.status) this.certidoes.form.status = res.status
         if (res.numero_certidao) this.certidoes.form.numero_certidao = res.numero_certidao
         if (res.data_validade) this.certidoes.form.data_validade = res.data_validade
-        if (res.observacao) this.certidoes.form.observacao = res.observacao
+        // Sempre substitui observacao (inclusive limpa quando res.observacao é null)
+        this.certidoes.form.observacao = res.observacao || ''
         // Data de consulta = hoje
         this.certidoes.form.data_consulta = new Date().toISOString().slice(0, 10)
       } catch(e) {

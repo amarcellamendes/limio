@@ -593,10 +593,17 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int) -> dict:
     except Exception:
         pass
 
-    # 4b. Itera pelos meses: procura links/td com "MM/AAAA" e clica
-    for mes in range(1, 13):
+    # 4b. Itera pelos meses do mais recente para o mais antigo
+    # O último PGDAS transmitido tem o RBT12 (receita bruta acumulada 12 meses)
+    from datetime import date as _dt_date
+    _hoje = _dt_date.today()
+    # Começa no mês anterior ao atual e vai até janeiro do ano
+    mes_inicio = _hoje.month - 1 if _hoje.year == ano else 12
+    if mes_inicio < 1:
+        mes_inicio = 12  # edge case: estamos em janeiro
+
+    for mes in range(mes_inicio, 0, -1):  # mês anterior → janeiro
         comp_slash = f"{mes:02d}/{ano}"
-        comp_key = f"{ano}-{mes:02d}"
         try:
             el = page.locator(
                 f"a:has-text('{comp_slash}'), td:has-text('{comp_slash}'), "
@@ -612,6 +619,11 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int) -> dict:
                     for r in month_recs:
                         if not any(x["competencia"] == r["competencia"] for x in receitas):
                             receitas.append(r)
+                    # Se achou o mês mais recente com dados, não precisa continuar
+                    if receitas and mes == mes_inicio:
+                        await page.go_back()
+                        await page.wait_for_timeout(1000)
+                        break
                 await page.go_back()
                 await page.wait_for_timeout(1500)
         except Exception:
@@ -680,13 +692,18 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int) -> dict:
             pass
 
     debug_url = page.url  # URL atual após toda navegação
+    from datetime import date as _dt_date
+    _hoje_av = _dt_date.today()
+    mes_ant = _hoje_av.month - 1 if _hoje_av.month > 1 else 12
+    ano_ant = _hoje_av.year if _hoje_av.month > 1 else _hoje_av.year - 1
     aviso = (
-        f"Dados extraídos: {len(receitas)} competência(s) de {ano}."
+        f"PGDAS-D: {len(receitas)} competência(s) importada(s). "
+        f"O RBT12 do último PGDAS ({mes_ant:02d}/{ano_ant}) foi usado como base."
         if receitas
         else (
-            f"Acesso ao PGDAS-D estabelecido (URL final: {debug_url}). "
-            f"Nenhuma declaração de {ano} encontrada — pode ser que o ano ainda não tenha "
-            "declarações transmitidas, ou o portal exige navegação manual adicional."
+            f"Acesso ao PGDAS-D estabelecido (URL: {debug_url}). "
+            f"Nenhum PGDAS de {mes_ant:02d}/{ano} encontrado — verifique se há declaração transmitida "
+            f"para este período no portal do Simples Nacional."
         )
     )
     return {"receitas": receitas, "aviso": aviso}
@@ -778,24 +795,35 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int) -> dict:
         except Exception:
             pass
 
+    from datetime import date as _dt_date
+    _hoje_es = _dt_date.today()
+    mes_ant_es = _hoje_es.month - 1 if _hoje_es.month > 1 else 12
+    ano_ant_es = _hoje_es.year if _hoje_es.month > 1 else _hoje_es.year - 1
     aviso = (
-        f"Dados de folha extraídos: {len(folhas)} competência(s) de {ano}."
+        f"eSocial: {len(folhas)} competência(s) de folha importada(s). "
+        f"Último mês buscado: {mes_ant_es:02d}/{ano_ant_es}."
         if folhas
         else (
-            "Acesso ao eSocial estabelecido. Os totalizadores (S-5011) dependem do "
-            "fechamento mensal (S-1299) pelo empregador. Se os períodos ainda não foram "
-            "fechados, os dados não estarão disponíveis. Lance manualmente ou acesse "
-            "o portal do eSocial diretamente."
+            f"Acesso ao eSocial estabelecido. Nenhuma folha de {mes_ant_es:02d}/{ano_ant_es} encontrada. "
+            "Os totalizadores (S-5011) dependem do fechamento mensal (S-1299). "
+            "Se ainda não foi fechado, lance manualmente no campo de folha."
         )
     )
     return {"folhas": folhas, "aviso": aviso}
 
 
 async def _tentar_api_esocial(page, context, cnpj: str, ano: int) -> list:
-    """Tenta buscar totalizadores via API REST do eSocial (se autenticado via cookie)."""
+    """Tenta buscar totalizadores via API REST do eSocial (se autenticado via cookie).
+    Itera do mês anterior ao atual para trás (busca o mais recente primeiro).
+    """
     folhas = []
     cnpj_limpo = re.sub(r"\D", "", cnpj)
-    for mes in range(1, 13):
+    from datetime import date as _dt_date
+    _hoje = _dt_date.today()
+    mes_inicio = _hoje.month - 1 if _hoje.year == ano else 12
+    if mes_inicio < 1:
+        mes_inicio = 12
+    for mes in range(mes_inicio, 0, -1):
         comp = f"{ano}{mes:02d}"
         comp_key = f"{ano}-{mes:02d}"
         api_urls = [
@@ -1129,23 +1157,58 @@ async def _tarefa_ecac_faturamento(page, context, cnpj: str, ano: int) -> dict:
 # ─── Consulta automática de certidões ────────────────────────────────────────
 
 async def _consultar_cnd_federal(cnpj: str) -> dict:
-    """CND Federal — Receita Federal + PGFN. Usa Playwright (portal JS-rendered)."""
-    if not await _playwright_ok():
-        return {"status": "em_analise", "observacao": "Playwright não disponível. Acesse: https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/emitir"}
+    """CND Federal — Receita Federal + PGFN.
+    Tenta httpx direto (GET público) antes do Playwright.
+    O portal RF bloqueia automação em ambientes cloud; httpx funciona para CNPJ simples.
+    """
+    import httpx as _httpx
 
     cnpj_digits = re.sub(r'\D', '', cnpj)
 
+    # 1. Tentativa httpx — a RF tem endpoint de emissão via GET com CNPJ
+    _RF_URLS = [
+        f"https://solucoes.receita.fazenda.gov.br/Servicos/CertidaoInternet/PJ/Emitir?NrCnpj={cnpj_digits}",
+        f"https://solucoes.receita.fazenda.gov.br/Servicos/CertidaoInternet/PJ/emitir?NrCnpj={cnpj_digits}",
+    ]
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+        "Accept-Language": "pt-BR,pt;q=0.9",
+    }
+    for url in _RF_URLS:
+        try:
+            async with _httpx.AsyncClient(verify=False, timeout=25, follow_redirects=True, headers=headers) as c:
+                r = await c.get(url)
+                if r.status_code == 200 and len(r.text) > 500 and "502" not in r.text[:200]:
+                    result = _parse_certidao_html(r.text, "cnd_federal", page_url=str(r.url))
+                    if result["status"] in ("regular", "irregular"):
+                        return result
+                    if result["status"] == "em_analise":
+                        # Retorna resultado parcial se teve conteúdo
+                        title_m = re.search(r'<title[^>]*>([^<]+)</title>', r.text, re.I)
+                        title = title_m.group(1).strip() if title_m else ""
+                        if "certid" in title.lower() or "receita" in title.lower() or "pgfn" in title.lower():
+                            return result
+        except Exception:
+            pass
+
+    # 2. Playwright como fallback
+    if not await _playwright_ok():
+        return {
+            "status": "em_analise",
+            "observacao": "Portal da Receita Federal bloqueado para acesso automatizado. Acesse manualmente: https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/emitir"
+        }
+
     async def _tarefa(page):
         url = "https://solucoes.receita.fazenda.gov.br/Servicos/CertidaoInternet/PJ/emitir"
-        await page.goto(url, wait_until="networkidle", timeout=40_000)
-        # preenche CNPJ — a RF usa campo 'NrCnpj' ou 'cnpj'
+        await page.goto(url, wait_until="domcontentloaded", timeout=40_000)
+        await page.wait_for_timeout(2000)
         for sel in ['input[name="NrCnpj"]', 'input[name="cnpj"]', 'input[id*="cnpj" i]']:
             try:
                 await page.fill(sel, cnpj_digits, timeout=3_000)
                 break
             except Exception:
                 pass
-        # clica no botão de emissão
         for sel in ['input[type="image"]', 'button[type="submit"]', 'input[type="submit"]', 'a:has-text("Emitir")']:
             try:
                 await page.click(sel, timeout=3_000)
@@ -1158,19 +1221,59 @@ async def _consultar_cnd_federal(cnpj: str) -> dict:
     try:
         return await _run_playwright_no_cert(_tarefa)
     except Exception as e:
-        return {"status": "em_analise", "observacao": f"Erro na consulta automática: {e}. Acesse: https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/emitir"}
+        return {
+            "status": "em_analise",
+            "observacao": f"Portal RF inacessível: {str(e)[:100]}. Acesse: https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/emitir"
+        }
 
 
 async def _consultar_cnd_fgts(cnpj: str) -> dict:
-    """CRF FGTS — Caixa Econômica Federal. Usa Playwright (portal JSF)."""
-    if not await _playwright_ok():
-        return {"status": "em_analise", "observacao": "Playwright não disponível. Acesse: https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf"}
+    """CRF FGTS — Caixa Econômica Federal.
+    Tenta httpx direto (API REST da Caixa) e, se falhar, abre via Playwright.
+    """
+    import httpx as _httpx
 
     cnpj_digits = re.sub(r'\D', '', cnpj)
 
+    # 1. Tenta API REST pública da Caixa (não requer autenticação para consulta de CRF)
+    _URLS_FGTS = [
+        f"https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf",
+        f"https://crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf",
+        f"https://crf.caixa.gov.br/certidao/?cnpj={cnpj_digits}",
+    ]
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+
+    for url in _URLS_FGTS:
+        try:
+            async with _httpx.AsyncClient(verify=False, timeout=20, follow_redirects=True, headers=headers) as c:
+                r = await c.get(url)
+                if r.status_code == 200 and len(r.text) > 500:
+                    result = _parse_certidao_html(r.text, "cnd_fgts", page_url=str(r.url))
+                    if result["status"] != "em_analise":
+                        return result
+        except Exception:
+            pass
+
+    # 2. Playwright como fallback
+    if not await _playwright_ok():
+        return {
+            "status": "em_analise",
+            "observacao": "CRF FGTS: portal da Caixa fora do ar ou com acesso bloqueado. Acesse manualmente: https://crf.caixa.gov.br"
+        }
+
     async def _tarefa(page):
-        url = "https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf"
-        await page.goto(url, wait_until="networkidle", timeout=40_000)
+        for url in _URLS_FGTS:
+            try:
+                await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                await page.wait_for_timeout(3000)
+                html = await page.content()
+                if "Azion" not in html and len(html) > 1000:
+                    break
+            except Exception:
+                pass
         for sel in ['input[id*="cnpj" i]', 'input[name*="cnpj" i]', 'input[type="text"]']:
             try:
                 await page.fill(sel, cnpj_digits, timeout=3_000)
@@ -1183,13 +1286,16 @@ async def _consultar_cnd_fgts(cnpj: str) -> dict:
                 break
             except Exception:
                 pass
-        await page.wait_for_load_state("networkidle", timeout=40_000)
+        await page.wait_for_load_state("networkidle", timeout=30_000)
         return _parse_certidao_html(await page.content(), "cnd_fgts", page_url=page.url)
 
     try:
         return await _run_playwright_no_cert(_tarefa)
     except Exception as e:
-        return {"status": "em_analise", "observacao": f"Erro na consulta: {e}. Acesse: https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf"}
+        return {
+            "status": "em_analise",
+            "observacao": f"Portal CRF FGTS inacessível: {str(e)[:120]}. Acesse: https://crf.caixa.gov.br"
+        }
 
 
 async def _consultar_cndt_tst(cnpj: str) -> dict:
@@ -1237,8 +1343,8 @@ async def _consultar_cndt_trt(cnpj: str, uf: str) -> dict:
         "PR": "https://certidao.trt9.jus.br/certidao/",
         "DF": "https://certidao.trt10.jus.br/certidao/",
         "TO": "https://certidao.trt10.jus.br/certidao/",
-        "AM": "https://certidao.trt11.jus.br/certidao/",
-        "RR": "https://certidao.trt11.jus.br/certidao/",
+        "AM": "https://www.tst.jus.br/certidao",
+        "RR": "https://www.tst.jus.br/certidao",
         "SC": "https://certidao.trt12.jus.br/certidao/",
         "PB": "https://certidao.trt13.jus.br/certidao/",
         "RO": "https://certidao.trt14.jus.br/certidao/",
@@ -1336,7 +1442,7 @@ async def _consultar_cnd_estadual(cnpj: str, uf: str, tipo: str) -> dict:
 async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
     """CND Municipal — varia por município. Usa Playwright para municípios com portal JS."""
     _PORTAIS = {
-        "manaus": "https://sefin.manaus.am.gov.br/certidao",
+        "manaus": "https://semef.manaus.am.gov.br/certidaonegativa/emissao",
         "são paulo": "https://nfe.prefeitura.sp.gov.br/contribuinte/certidao.aspx",
         "rio de janeiro": "https://mobuss.rio.rj.gov.br/certidao",
         "belo horizonte": "https://bhiss.pbh.gov.br/bhiss/certidao",
@@ -1642,6 +1748,32 @@ def _parse_pgdas_lxml(html: str, ano: int, mes_fixo: Optional[int] = None) -> li
                             receitas.append({"competencia": comp, "valor_receita": float(val), "origem": "pgdas_d"})
                     except ValueError:
                         pass
+
+    # ── Estratégia 3: extrair RBT12 do texto livre (campos fora de tabela) ──
+    if not receitas:
+        # O PGDAS-D exibe "RBT12: R$ 123.456,00" ou "Receita Bruta dos Últimos 12 Meses: R$ ..."
+        rbt12_pats = [
+            re.compile(r'rbt12[^R]{0,30}R\$\s*([\d.,]+)', re.IGNORECASE),
+            re.compile(r'receita\s+bruta\s+(?:acumulada|dos\s+últimos|total)\s+(?:12|doze)[^R]{0,30}R\$\s*([\d.,]+)', re.IGNORECASE),
+            re.compile(r'receita\s+bruta\s+nos\s+12\s+meses[^R]{0,30}R\$\s*([\d.,]+)', re.IGNORECASE),
+            re.compile(r'RBT12[^0-9]{0,10}([\d]{1,3}(?:\.[\d]{3})+,[\d]{2})', re.IGNORECASE),
+        ]
+        for pat in rbt12_pats:
+            m = pat.search(html)
+            if m:
+                try:
+                    val = float(m.group(1).replace(".", "").replace(",", "."))
+                    if val > 0:
+                        # Usar competência do mês anterior ao atual como referência
+                        from datetime import date as _date
+                        hoje = _date.today()
+                        mes_ref = hoje.month - 1 if hoje.month > 1 else 12
+                        ano_ref = hoje.year if hoje.month > 1 else hoje.year - 1
+                        comp = f"{ano_ref}-{mes_ref:02d}"
+                        receitas.append({"competencia": comp, "valor_receita": val, "origem": "pgdas_d_rbt12"})
+                        break
+                except ValueError:
+                    pass
 
     return receitas
 
