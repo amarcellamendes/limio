@@ -43,20 +43,32 @@ async def buscar_pgdas(
     escritorio: Escritorio = Depends(get_escritorio_atual),
     db: AsyncSession = Depends(get_db),
 ):
-    """Busca receita bruta no PGDAS-D usando certificado A1 do cliente."""
+    """Busca receita bruta no PGDAS-D.
+    Prioriza certificado de procuração do escritório (acesso via e-CAC).
+    Fallback para certificado próprio do cliente.
+    """
     cliente = await _get_cliente(cliente_id, escritorio.id, db)
-    cert_pem, key_pem = await _cert_ou_erro(cliente, senha)
 
     if not await _playwright_ok():
         raise HTTPException(503, "Módulo de automação não disponível.")
 
+    # Tenta certificado de procuração do escritório (acesso único via e-CAC)
+    usar_procuracao = bool(getattr(escritorio, "cert_procuracao_path", None))
+    if usar_procuracao:
+        try:
+            cert_pem, key_pem = await _cert_escritorio_ou_erro(escritorio)
+        except HTTPException:
+            usar_procuracao = False
+
+    if not usar_procuracao:
+        cert_pem, key_pem = await _cert_ou_erro(cliente, senha)
+
     try:
         resultado = await _run_playwright_multi(
             cert_pem, key_pem,
-            ["https://www8.receita.fazenda.gov.br", "https://cav.receita.fazenda.gov.br"],
-            lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano),
+            ["https://cav.receita.fazenda.gov.br", "https://www8.receita.fazenda.gov.br"],
+            lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano, usar_procuracao),
         )
-        # Salva receitas no banco
         for rec in resultado.get("receitas", []):
             await _upsert_receita(db, escritorio.id, cliente.id, rec["competencia"], rec["valor_receita"], "pgdas_d")
         await db.commit()
@@ -73,19 +85,32 @@ async def buscar_esocial(
     escritorio: Escritorio = Depends(get_escritorio_atual),
     db: AsyncSession = Depends(get_db),
 ):
-    """Busca dados de folha no eSocial usando certificado A1 do cliente."""
+    """Busca dados de folha no eSocial.
+    Prioriza certificado de procuração do escritório.
+    Fallback para certificado próprio do cliente.
+    """
     cliente = await _get_cliente(cliente_id, escritorio.id, db)
-    cert_pem, key_pem = await _cert_ou_erro(cliente, senha)
 
     if not await _playwright_ok():
         raise HTTPException(503, "Módulo de automação não disponível.")
+
+    # Tenta certificado de procuração do escritório
+    usar_procuracao = bool(getattr(escritorio, "cert_procuracao_path", None))
+    if usar_procuracao:
+        try:
+            cert_pem, key_pem = await _cert_escritorio_ou_erro(escritorio)
+        except HTTPException:
+            usar_procuracao = False
+
+    if not usar_procuracao:
+        cert_pem, key_pem = await _cert_ou_erro(cliente, senha)
 
     try:
         resultado = await _run_playwright_multi(
             cert_pem, key_pem,
             ["https://empregador.esocial.gov.br", "https://login.esocial.gov.br",
              "https://cav.receita.fazenda.gov.br"],
-            lambda p, c: _tarefa_esocial(p, c, cliente.cnpj, ano),
+            lambda p, c: _tarefa_esocial(p, c, cliente.cnpj, ano, usar_procuracao),
         )
         for f in resultado.get("folhas", []):
             await _upsert_folha(db, escritorio.id, cliente.id, f["competencia"], f["valor_total_folha"])
@@ -324,6 +349,27 @@ async def _cert_ou_erro(cliente: Cliente, senha_override: str = "") -> tuple[byt
     return cert_pem, key_pem
 
 
+async def _cert_escritorio_ou_erro(escritorio) -> tuple[bytes, bytes]:
+    """Carrega o certificado A1 do escritório (para acesso via procuração)."""
+    path = getattr(escritorio, "cert_procuracao_path", None)
+    senha = getattr(escritorio, "cert_procuracao_senha", None) or ""
+    if not path:
+        raise HTTPException(400, "Certificado de procuração do escritório não configurado. Acesse Configurações → Certificado de Procuração.")
+    if not os.path.exists(path):
+        raise HTTPException(400, "Arquivo do certificado de procuração não encontrado no servidor. Faça o upload novamente.")
+    try:
+        from cryptography.hazmat.primitives.serialization.pkcs12 import load_pkcs12
+        from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
+        with open(path, "rb") as f:
+            pfx = f.read()
+        p12 = load_pkcs12(pfx, senha.encode() if senha else b"")
+        cert_pem = p12.cert.certificate.public_bytes(Encoding.PEM)
+        key_pem = p12.key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
+        return cert_pem, key_pem
+    except Exception as e:
+        raise HTTPException(400, f"Erro ao abrir certificado de procuração: {e}")
+
+
 async def _carregar_certificado(cliente: Cliente, tipo: str, senha_override: str = ""):
     path = getattr(cliente, f"{tipo}_certificado_path", None)
     senha = senha_override or getattr(cliente, f"{tipo}_certificado_senha", None) or ""
@@ -508,23 +554,149 @@ async def _upsert_folha(db, escritorio_id, cliente_id, competencia, valor):
 
 # ─── Tarefa PGDAS-D ──────────────────────────────────────────────────────────
 
-async def _tarefa_pgdas(page, context, cnpj: str, ano: int) -> dict:
+async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: bool = False) -> dict:
     """
-    Navega no portal do Simples Nacional e extrai receita bruta por competência.
-    Tenta múltiplas estratégias de navegação para cobrir variações do portal.
+    Navega no portal do Simples Nacional/e-CAC e extrai receita bruta por competência.
+    Quando usar_procuracao=True: usa o cert do escritório via e-CAC + procuração.
+    Quando usar_procuracao=False: usa cert próprio do cliente no Simples Nacional.
     """
+    from datetime import date as _dt_date
     cnpj_limpo = re.sub(r"\D", "", cnpj)
+    cnpj_fmt = f"{cnpj_limpo[:2]}.{cnpj_limpo[2:5]}.{cnpj_limpo[5:8]}/{cnpj_limpo[8:12]}-{cnpj_limpo[12:]}"
     receitas: list[dict] = []
+    _hoje = _dt_date.today()
+    mes_inicio = _hoje.month - 1 if _hoje.year == ano else 12
+    if mes_inicio < 1:
+        mes_inicio = 12
 
-    # 1. Autentica via e-CAC primeiro (certificado é apresentado aqui)
+    # ── Fluxo via procuração (cert do escritório, e-CAC) ──────────────────────
+    if usar_procuracao:
+        # 1. Login via e-CAC com certificado do escritório
+        await page.goto(
+            "https://cav.receita.fazenda.gov.br/autenticacao/login",
+            wait_until="domcontentloaded", timeout=_PGDAS_TIMEOUT,
+        )
+        await page.wait_for_timeout(3000)
+        for sel in ["a:has-text('Certificado Digital')", "button:has-text('Certificado Digital')",
+                    "input[value*='ertificado']", "#btnCertificado"]:
+            try:
+                el = page.locator(sel).first
+                if await el.count() > 0:
+                    await el.click()
+                    await page.wait_for_load_state("domcontentloaded", timeout=20000)
+                    await page.wait_for_timeout(2000)
+                    break
+            except Exception:
+                pass
+
+        # 2. Alterar perfil de acesso para o cliente (procuração)
+        for sel in [
+            f"a:has-text('{cnpj_fmt}')", f"a:has-text('{cnpj_limpo}')",
+            f"td:has-text('{cnpj_limpo[:8]}')", f"tr:has-text('{cnpj_fmt}')",
+            "a:has-text('Alterar perfil')", "button:has-text('Alterar perfil')",
+            "#lnkAlterarPerfil", "a:has-text('Trocar perfil')",
+        ]:
+            try:
+                el = page.locator(sel).first
+                if await el.count() > 0:
+                    await el.click()
+                    await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    await page.wait_for_timeout(2000)
+                    # Após clicar em "Alterar perfil", busca o CNPJ do cliente na lista
+                    for sel2 in [f"a:has-text('{cnpj_fmt}')", f"a:has-text('{cnpj_limpo[:8]}')",
+                                  f"td:has-text('{cnpj_limpo}')"]:
+                        try:
+                            el2 = page.locator(sel2).first
+                            if await el2.count() > 0:
+                                await el2.click()
+                                await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                                await page.wait_for_timeout(2000)
+                                break
+                        except Exception:
+                            pass
+                    break
+            except Exception:
+                pass
+
+        # 3. Navega para a página de PGDAS-D no e-CAC (URL exata fornecida pela usuária)
+        await page.goto(
+            "https://cav.receita.fazenda.gov.br/ecac/Aplicacao.aspx?id=10009&origem=menu",
+            wait_until="domcontentloaded", timeout=_PGDAS_TIMEOUT,
+        )
+        await page.wait_for_timeout(4000)
+
+        # 4. Se ainda precisa selecionar o cliente (lista de procurados aparece na página)
+        try:
+            el = page.locator(
+                f"a:has-text('{cnpj_fmt}'), a:has-text('{cnpj_limpo[:8]}'), "
+                f"td:has-text('{cnpj_limpo}')"
+            ).first
+            if await el.count() > 0:
+                await el.click()
+                await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                await page.wait_for_timeout(3000)
+        except Exception:
+            pass
+
+        html = await page.content()
+        # 5. Extrai o PA mais recente — a página do e-CAC mostra "PA MM/AAAA" como seções
+        mes_ant_ref = mes_inicio
+        ano_ref_loop = ano if _hoje.month > 1 else ano - 1
+        receitas = _parse_pgdas_lxml(html, ano)
+
+        # 6. Tenta clicar na declaração do PA mais recente para obter RBT12
+        if not receitas:
+            for mes in range(mes_inicio, 0, -1):
+                comp_slash = f"{mes:02d}/{ano}"
+                pa_label = f"PA {comp_slash}"
+                try:
+                    # Encontra a seção PA e clica no ícone de declaração
+                    for sel in [
+                        f"tr:near(:text('{pa_label}')) a[href*='declara'], "
+                        f"tr:near(:text('{pa_label}')) img[title*='eclara']",
+                        f"a:near(:text('{pa_label}'))",
+                        f"a[title*='{comp_slash}']",
+                    ]:
+                        el = page.locator(sel).first
+                        if await el.count() > 0:
+                            await el.click()
+                            await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                            await page.wait_for_timeout(2000)
+                            html2 = await page.content()
+                            month_recs = _parse_pgdas_lxml(html2, ano, mes_fixo=mes)
+                            if month_recs:
+                                receitas.extend(month_recs)
+                            await page.go_back()
+                            await page.wait_for_timeout(1500)
+                            break
+                except Exception:
+                    pass
+                if receitas:
+                    break
+
+        debug_url = page.url
+        _hoje_av = _dt_date.today()
+        mes_ant = _hoje_av.month - 1 if _hoje_av.month > 1 else 12
+        ano_ant = _hoje_av.year if _hoje_av.month > 1 else _hoje_av.year - 1
+        aviso = (
+            f"PGDAS-D (e-CAC/procuração): {len(receitas)} competência(s) importada(s). "
+            f"Último período buscado: {mes_ant:02d}/{ano_ant}."
+            if receitas
+            else (
+                f"e-CAC acessado via procuração (URL: {debug_url}). "
+                f"Nenhum dado de {mes_ant:02d}/{ano} encontrado. Verifique se há PGDAS-D transmitido "
+                "para este período e se a procuração está ativa."
+            )
+        )
+        return {"receitas": receitas, "aviso": aviso}
+
+    # ── Fluxo direto com cert do próprio cliente (Simples Nacional) ───────────
+    # 1. Autentica via e-CAC
     await page.goto(
         "https://cav.receita.fazenda.gov.br/autenticacao/login",
-        wait_until="domcontentloaded",
-        timeout=_PGDAS_TIMEOUT,
+        wait_until="domcontentloaded", timeout=_PGDAS_TIMEOUT,
     )
     await page.wait_for_timeout(3000)
-
-    # Seleciona "Certificado Digital" se houver opção
     for sel in ["a:has-text('Certificado Digital')", "button:has-text('Certificado Digital')",
                 "input[value*='ertificado']", "#btnCertificado"]:
         try:
@@ -537,173 +709,76 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int) -> dict:
         except Exception:
             pass
 
-    # 2. Navega para o Simples Nacional após autenticação
+    # 2. Tenta URL direta do e-CAC para PGDAS-D
     await page.goto(
-        "https://www8.receita.fazenda.gov.br/SimplesNacional/",
-        wait_until="domcontentloaded",
-        timeout=_PGDAS_TIMEOUT,
+        "https://cav.receita.fazenda.gov.br/ecac/Aplicacao.aspx?id=10009&origem=menu",
+        wait_until="domcontentloaded", timeout=_PGDAS_TIMEOUT,
     )
     await page.wait_for_timeout(3000)
+    html = await page.content()
+    receitas = _parse_pgdas_lxml(html, ano)
 
-    # 3. Seleção de CNPJ (certificado multiempresa)
-    try:
-        el = page.locator(f"a:has-text('{cnpj_limpo[:8]}')").first
-        if await el.count() > 0:
-            await el.click()
-            await page.wait_for_load_state("domcontentloaded", timeout=15000)
-            await page.wait_for_timeout(2000)
-    except Exception:
-        pass
-
-    # 4. Navega pelos links do menu até encontrar dados
-    menu_links = [
-        "a:has-text('PGDAS')", "a:has-text('PGDAS-D')",
-        "a:has-text('Consulta')", "a:has-text('Declarações')",
-        "a:has-text('Extrato')", "a:has-text('Apuração')",
-    ]
-    for sel in menu_links:
+    # 3. Navega para Simples Nacional se necessário
+    if not receitas:
+        await page.goto(
+            "https://www8.receita.fazenda.gov.br/SimplesNacional/",
+            wait_until="domcontentloaded", timeout=_PGDAS_TIMEOUT,
+        )
+        await page.wait_for_timeout(3000)
         try:
-            el = page.locator(sel).first
+            el = page.locator(f"a:has-text('{cnpj_limpo[:8]}')").first
             if await el.count() > 0:
                 await el.click()
                 await page.wait_for_load_state("domcontentloaded", timeout=15000)
                 await page.wait_for_timeout(2000)
-                html = await page.content()
-                receitas = _parse_pgdas_lxml(html, ano)
-                if receitas:
-                    return {"receitas": receitas, "aviso": f"Dados extraídos de {len(receitas)} competência(s) — {ano}."}
         except Exception:
             pass
 
-    # 4. Tenta acessar diretamente o PGDAS-D e navegar pelo calendário de competências
-    await page.goto(
-        "https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATBHE/pgdas.app/emPGDAS/",
-        wait_until="domcontentloaded",
-        timeout=_PGDAS_TIMEOUT,
-    )
-    await page.wait_for_timeout(3000)
-
-    # 4a. Tenta selecionar o ano via dropdown/select
-    try:
-        sel_ano = page.locator(f"select option[value='{ano}']").first
-        if await sel_ano.count() > 0:
-            parent = page.locator(f"select:has(option[value='{ano}'])").first
-            await parent.select_option(str(ano))
-            await page.wait_for_timeout(2000)
-    except Exception:
-        pass
-
-    # 4b. Itera pelos meses do mais recente para o mais antigo
-    # O último PGDAS transmitido tem o RBT12 (receita bruta acumulada 12 meses)
-    from datetime import date as _dt_date
-    _hoje = _dt_date.today()
-    # Começa no mês anterior ao atual e vai até janeiro do ano
-    mes_inicio = _hoje.month - 1 if _hoje.year == ano else 12
-    if mes_inicio < 1:
-        mes_inicio = 12  # edge case: estamos em janeiro
-
-    for mes in range(mes_inicio, 0, -1):  # mês anterior → janeiro
-        comp_slash = f"{mes:02d}/{ano}"
-        try:
-            el = page.locator(
-                f"a:has-text('{comp_slash}'), td:has-text('{comp_slash}'), "
-                f"[title='{comp_slash}'], [data-competencia='{comp_slash}']"
-            ).first
-            if await el.count() > 0:
-                await el.click()
-                await page.wait_for_load_state("domcontentloaded", timeout=15000)
-                await page.wait_for_timeout(1500)
-                html = await page.content()
-                month_recs = _parse_pgdas_lxml(html, ano, mes_fixo=mes)
-                if month_recs:
-                    for r in month_recs:
-                        if not any(x["competencia"] == r["competencia"] for x in receitas):
-                            receitas.append(r)
-                    # Se achou o mês mais recente com dados, não precisa continuar
-                    if receitas and mes == mes_inicio:
-                        await page.go_back()
-                        await page.wait_for_timeout(1000)
-                        break
-                await page.go_back()
-                await page.wait_for_timeout(1500)
-        except Exception:
-            pass
-
-    # 5. Parse da página atual (pode já ter tabela consolidada)
-    if not receitas:
+        await page.goto(
+            "https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATBHE/pgdas.app/emPGDAS/",
+            wait_until="domcontentloaded", timeout=_PGDAS_TIMEOUT,
+        )
+        await page.wait_for_timeout(3000)
         html = await page.content()
         receitas = _parse_pgdas_lxml(html, ano)
 
-    # 6. Tenta URL alternativa de extrato/consulta — aguarda JS renderizar
+    # 4. Itera pelos meses do mais recente para o mais antigo
     if not receitas:
-        for extrato_url in [
-            f"https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATBHE/pgdas.app/extrato.app/?ano={ano}",
-            f"https://www8.receita.fazenda.gov.br/SimplesNacional/Aplicacoes/ATBHE/pgdas.app/historico.app/?ano={ano}",
-        ]:
+        for mes in range(mes_inicio, 0, -1):
+            comp_slash = f"{mes:02d}/{ano}"
             try:
-                await page.goto(extrato_url, wait_until="networkidle", timeout=45000)
-                # Aguarda elemento de tabela ou competência aparecer
-                try:
-                    await page.wait_for_selector("table, .competencia, td, [class*='declara']",
-                                                  timeout=8000)
-                except Exception:
-                    pass
-                await page.wait_for_timeout(2000)
-                html = await page.content()
-                receitas = _parse_pgdas_lxml(html, ano)
-                if receitas:
-                    break
+                el = page.locator(
+                    f"a:has-text('{comp_slash}'), td:has-text('{comp_slash}'), "
+                    f"[title='{comp_slash}'], [data-competencia='{comp_slash}']"
+                ).first
+                if await el.count() > 0:
+                    await el.click()
+                    await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    await page.wait_for_timeout(1500)
+                    html = await page.content()
+                    month_recs = _parse_pgdas_lxml(html, ano, mes_fixo=mes)
+                    if month_recs:
+                        receitas.extend(month_recs)
+                        await page.go_back()
+                        await page.wait_for_timeout(1000)
+                        break
+                    await page.go_back()
+                    await page.wait_for_timeout(1500)
             except Exception:
                 pass
 
-    # 7. Última tentativa: itera clicando em links de competência na página atual
-    if not receitas:
-        try:
-            html = await page.content()
-            # Procura links com padrão MM/AAAA ou MM-AAAA no href ou texto
-            from lxml import html as lx
-            tree = lx.fromstring(html)
-            comp_links = []
-            for a in tree.iter("a"):
-                txt = (a.text_content() or "").strip()
-                href = a.get("href", "")
-                if re.search(r'\d{2}/\d{4}|\d{2}-\d{4}', txt) or "competencia" in href.lower():
-                    comp_links.append(txt)
-            if comp_links:
-                # Encontrou links — tenta clicar no primeiro mês disponível
-                for mes in range(1, 13):
-                    comp_slash = f"{mes:02d}/{ano}"
-                    try:
-                        el = page.locator(f"a:has-text('{comp_slash}')").first
-                        if await el.count() > 0:
-                            await el.click()
-                            await page.wait_for_load_state("networkidle", timeout=20000)
-                            await page.wait_for_timeout(1500)
-                            html = await page.content()
-                            month_recs = _parse_pgdas_lxml(html, ano, mes_fixo=mes)
-                            for r2 in month_recs:
-                                if not any(x["competencia"] == r2["competencia"] for x in receitas):
-                                    receitas.append(r2)
-                            await page.go_back()
-                            await page.wait_for_timeout(1000)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-    debug_url = page.url  # URL atual após toda navegação
-    from datetime import date as _dt_date
-    _hoje_av = _dt_date.today()
-    mes_ant = _hoje_av.month - 1 if _hoje_av.month > 1 else 12
-    ano_ant = _hoje_av.year if _hoje_av.month > 1 else _hoje_av.year - 1
+    debug_url = page.url
+    _hoje_av2 = _dt_date.today()
+    mes_ant2 = _hoje_av2.month - 1 if _hoje_av2.month > 1 else 12
+    ano_ant2 = _hoje_av2.year if _hoje_av2.month > 1 else _hoje_av2.year - 1
     aviso = (
         f"PGDAS-D: {len(receitas)} competência(s) importada(s). "
-        f"O RBT12 do último PGDAS ({mes_ant:02d}/{ano_ant}) foi usado como base."
+        f"Último período buscado: {mes_ant2:02d}/{ano_ant2}."
         if receitas
         else (
             f"Acesso ao PGDAS-D estabelecido (URL: {debug_url}). "
-            f"Nenhum PGDAS de {mes_ant:02d}/{ano} encontrado — verifique se há declaração transmitida "
-            f"para este período no portal do Simples Nacional."
+            f"Nenhum PGDAS de {mes_ant2:02d}/{ano} encontrado — verifique se há declaração transmitida "
+            "para este período no portal do Simples Nacional."
         )
     )
     return {"receitas": receitas, "aviso": aviso}
@@ -711,72 +786,106 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int) -> dict:
 
 # ─── Tarefa eSocial ──────────────────────────────────────────────────────────
 
-async def _tarefa_esocial(page, context, cnpj: str, ano: int) -> dict:
+async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: bool = False) -> dict:
     """
-    Navega no portal do eSocial e extrai totais de folha de pagamento (S-5011).
-    Tenta o novo portal empregador.esocial.gov.br e o portal legado.
+    Navega no portal do eSocial e extrai totais de folha (Totalizadores → Empregador).
+    Quando usar_procuracao=True: usa cert do escritório + troca perfil para o cliente.
     """
+    from datetime import date as _dt_date
+    cnpj_limpo = re.sub(r"\D", "", cnpj)
+    cnpj_fmt = f"{cnpj_limpo[:2]}.{cnpj_limpo[2:5]}.{cnpj_limpo[5:8]}/{cnpj_limpo[8:12]}-{cnpj_limpo[12:]}"
     folhas: list[dict] = []
+    _hoje = _dt_date.today()
+    mes_ant = _hoje.month - 1 if _hoje.month > 1 else 12
+    ano_ant = _hoje.year if _hoje.month > 1 else _hoje.year - 1
 
-    # 1. Tenta o novo portal do empregador
-    for url in [
+    # ── Login (mesmo passo para os dois fluxos) ───────────────────────────────
+    await page.goto(
         "https://empregador.esocial.gov.br/",
-        "https://login.esocial.gov.br/login.aspx",
+        wait_until="domcontentloaded", timeout=_ESOCIAL_TIMEOUT,
+    )
+    await page.wait_for_timeout(4000)
+    for sel in ["a:has-text('Certificado Digital')", "button:has-text('Certificado')",
+                "input[value*='ertificado']", ".certificado"]:
+        try:
+            el = page.locator(sel).first
+            if await el.count() > 0:
+                await el.click()
+                await page.wait_for_load_state("domcontentloaded", timeout=30000)
+                await page.wait_for_timeout(3000)
+                break
+        except Exception:
+            pass
+
+    # ── Troca perfil para o cliente (procuração) ──────────────────────────────
+    if usar_procuracao:
+        for sel in [
+            "a:has-text('Trocar Perfil')", "button:has-text('Trocar Perfil')",
+            "a:has-text('Trocar Módulo')", "a:has-text('Trocar perfil/módulo')",
+            "#lnkTrocarPerfil", ".trocar-perfil",
+        ]:
+            try:
+                el = page.locator(sel).first
+                if await el.count() > 0:
+                    await el.click()
+                    await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    await page.wait_for_timeout(2000)
+                    break
+            except Exception:
+                pass
+
+        # Seleciona o empregador (cliente) na lista
+        for sel in [
+            f"a:has-text('{cnpj_fmt}')", f"a:has-text('{cnpj_limpo[:8]}')",
+            f"td:has-text('{cnpj_limpo}')", f"tr:has-text('{cnpj_fmt}')",
+        ]:
+            try:
+                el = page.locator(sel).first
+                if await el.count() > 0:
+                    await el.click()
+                    await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    await page.wait_for_timeout(3000)
+                    break
+            except Exception:
+                pass
+
+    # ── Navega para Folha de Pagamento → Totalizadores → Empregador ──────────
+    # Tenta navegação via menu
+    for step_seq in [
+        # Sequência real do portal eSocial (baseada na captura de tela da usuária)
+        ["a:has-text('Folha de Pagamento')", "a:has-text('Totalizadores')", "a:has-text('Empregador')"],
+        ["a:has-text('Folha de Pagamento')", "a:has-text('Gestão de Folha')"],
+        ["a:has-text('Totalizadores')", "a:has-text('Empregador')"],
+        ["a:has-text('Totalizadores')"],
     ]:
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=_ESOCIAL_TIMEOUT)
-            await page.wait_for_timeout(4000)
-
-            # Se encontrar tela de login, clica em "Certificado Digital"
-            for sel in [
-                "a:has-text('Certificado Digital')",
-                "button:has-text('Certificado')",
-                "input[value*='ertificado']",
-                ".certificado",
-            ]:
-                try:
-                    el = page.locator(sel).first
-                    if await el.count() > 0:
-                        await el.click()
-                        await page.wait_for_load_state("domcontentloaded", timeout=30000)
-                        await page.wait_for_timeout(3000)
-                        break
-                except Exception:
-                    pass
-
-            # Navega até seção de totalizadores / relatórios de folha
-            nav_paths = [
-                ["a:has-text('Consultas')", "a:has-text('Totalizador')"],
-                ["a:has-text('Relatório')", "a:has-text('Folha')"],
-                ["a:has-text('Folha de Pagamento')"],
-                ["a:has-text('Totalizadores')"],
-                ["a:has-text('S-5011')"],
-                ["a:has-text('Remuneração')"],
-            ]
-            for path in nav_paths:
-                try:
-                    for step_sel in path:
-                        el = page.locator(step_sel).first
-                        if await el.count() > 0:
-                            await el.click()
-                            await page.wait_for_load_state("domcontentloaded", timeout=15000)
-                            await page.wait_for_timeout(2000)
-                    html = await page.content()
-                    folhas = _parse_esocial_lxml(html, ano)
-                    if folhas:
-                        break
-                except Exception:
-                    pass
-
+            for step_sel in step_seq:
+                el = page.locator(step_sel).first
+                if await el.count() > 0:
+                    await el.click()
+                    await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    await page.wait_for_timeout(2000)
+            html = await page.content()
+            folhas = _parse_esocial_lxml(html, ano)
             if folhas:
                 break
+        except Exception:
+            pass
 
-            # Tenta selecionar o ano se houver dropdown
+    # ── Seleciona o mês anterior no calendário ────────────────────────────────
+    if not folhas:
+        nomes_mes = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
+        nome_mes = nomes_mes[mes_ant - 1]
+        for sel in [
+            f"a:has-text('{nome_mes}')", f"button:has-text('{nome_mes}')",
+            f"td:has-text('{nome_mes}')", f"[data-mes='{mes_ant}']",
+            f"a:has-text('{mes_ant:02d}/{ano_ant}')", f"a:has-text('{mes_ant:02d}/{ano}')",
+        ]:
             try:
-                sel_ano = page.locator(f"select option[value='{ano}']").first
-                if await sel_ano.count() > 0:
-                    parent = page.locator(f"select:has(option[value='{ano}'])").first
-                    await parent.select_option(str(ano))
+                el = page.locator(sel).first
+                if await el.count() > 0:
+                    await el.click()
+                    await page.wait_for_load_state("domcontentloaded", timeout=15000)
                     await page.wait_for_timeout(2000)
                     html = await page.content()
                     folhas = _parse_esocial_lxml(html, ano)
@@ -785,26 +894,37 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int) -> dict:
             except Exception:
                 pass
 
-        except Exception:
-            continue
+    # ── Tenta Totalizadores → Contribuição Previdenciária via submenu ─────────
+    if not folhas:
+        for sel in ["a:has-text('Contribuição Previdenciária')", "a:has-text('Contribuição')",
+                    "a:has-text('FGTS')", "a:has-text('Imposto de Renda')"]:
+            try:
+                el = page.locator(sel).first
+                if await el.count() > 0:
+                    await el.click()
+                    await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    await page.wait_for_timeout(2000)
+                    html = await page.content()
+                    folhas = _parse_esocial_lxml(html, ano)
+                    if folhas:
+                        break
+            except Exception:
+                pass
 
-    # 2. Tenta a API REST do eSocial (se autenticado, pode funcionar)
+    # ── Fallback: tenta API REST do eSocial ───────────────────────────────────
     if not folhas:
         try:
             folhas = await _tentar_api_esocial(page, context, cnpj, ano)
         except Exception:
             pass
 
-    from datetime import date as _dt_date
-    _hoje_es = _dt_date.today()
-    mes_ant_es = _hoje_es.month - 1 if _hoje_es.month > 1 else 12
-    ano_ant_es = _hoje_es.year if _hoje_es.month > 1 else _hoje_es.year - 1
+    modo = "procuração" if usar_procuracao else "certificado do cliente"
     aviso = (
-        f"eSocial: {len(folhas)} competência(s) de folha importada(s). "
-        f"Último mês buscado: {mes_ant_es:02d}/{ano_ant_es}."
+        f"eSocial ({modo}): {len(folhas)} competência(s) de folha importada(s). "
+        f"Último mês buscado: {mes_ant:02d}/{ano_ant}."
         if folhas
         else (
-            f"Acesso ao eSocial estabelecido. Nenhuma folha de {mes_ant_es:02d}/{ano_ant_es} encontrada. "
+            f"eSocial ({modo}) acessado. Nenhuma folha de {mes_ant:02d}/{ano_ant} encontrada. "
             "Os totalizadores (S-5011) dependem do fechamento mensal (S-1299). "
             "Se ainda não foi fechado, lance manualmente no campo de folha."
         )

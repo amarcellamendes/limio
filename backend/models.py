@@ -75,6 +75,10 @@ class Escritorio(Base):
     # NFe.io — chave global do escritório (Company ID fica em cada Cliente)
     nfeio_api_key: Mapped[Optional[str]] = mapped_column(String(200))
 
+    # Certificado A1 do escritório para acesso via procuração no e-CAC/eSocial
+    cert_procuracao_path: Mapped[Optional[str]] = mapped_column(String(500))
+    cert_procuracao_senha: Mapped[Optional[str]] = mapped_column(String(200))
+
     # Entrega de nota ao cliente
     nota_enviar_email: Mapped[bool] = mapped_column(Boolean, default=False)
     nota_pasta_destino: Mapped[Optional[str]] = mapped_column(String(500))

@@ -39,13 +39,15 @@ def _migrate_sqlite(conn):
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}"))
 
     # Escritório — novos campos
-    add_col("escritorios", "nfeio_api_key",        "VARCHAR(200)")
-    add_col("escritorios", "nota_enviar_email",     "BOOLEAN DEFAULT 0")
-    add_col("escritorios", "nota_pasta_destino",    "VARCHAR(500)")
-    add_col("escritorios", "smtp_host",             "VARCHAR(200)")
-    add_col("escritorios", "smtp_port",             "INTEGER DEFAULT 587")
-    add_col("escritorios", "smtp_usuario",          "VARCHAR(200)")
-    add_col("escritorios", "smtp_senha",            "VARCHAR(200)")
+    add_col("escritorios", "nfeio_api_key",           "VARCHAR(200)")
+    add_col("escritorios", "nota_enviar_email",        "BOOLEAN DEFAULT 0")
+    add_col("escritorios", "nota_pasta_destino",       "VARCHAR(500)")
+    add_col("escritorios", "smtp_host",                "VARCHAR(200)")
+    add_col("escritorios", "smtp_port",                "INTEGER DEFAULT 587")
+    add_col("escritorios", "smtp_usuario",             "VARCHAR(200)")
+    add_col("escritorios", "smtp_senha",               "VARCHAR(200)")
+    add_col("escritorios", "cert_procuracao_path",     "VARCHAR(500)")
+    add_col("escritorios", "cert_procuracao_senha",    "VARCHAR(200)")
 
     # Clientes — novos campos
     add_col("clientes", "emite_nfse",              "BOOLEAN DEFAULT 1")

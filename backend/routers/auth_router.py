@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, UploadFile, File, Form
 import smtplib
 import asyncio
+import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -135,6 +136,7 @@ async def get_configuracoes(
         "smtp_port": getattr(escritorio, "smtp_port", 587),
         "smtp_usuario": getattr(escritorio, "smtp_usuario", None),
         "smtp_senha_configurada": bool(getattr(escritorio, "smtp_senha", None)),
+        "cert_procuracao_configurado": bool(getattr(escritorio, "cert_procuracao_path", None)),
     }
 
 
@@ -148,6 +150,42 @@ async def salvar_configuracoes(
         setattr(escritorio, campo, valor)
     await db.commit()
     return {"ok": True}
+
+
+@router.post("/me/upload-cert-procuracao")
+async def upload_cert_procuracao(
+    arquivo: UploadFile = File(...),
+    senha: str = Form(default=""),
+    escritorio: Escritorio = Depends(get_escritorio_atual),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload do certificado A1 do escritório para acesso via procuração (e-CAC/eSocial)."""
+    from ..config import settings
+    conteudo = await arquivo.read()
+    if len(conteudo) > 5 * 1024 * 1024:
+        raise HTTPException(400, "Arquivo muito grande (máximo 5 MB).")
+    if not arquivo.filename.lower().endswith(".pfx"):
+        raise HTTPException(400, "Somente arquivos .pfx são aceitos.")
+
+    # Valida o certificado antes de salvar
+    try:
+        from cryptography.hazmat.primitives.serialization.pkcs12 import load_pkcs12
+        p12 = load_pkcs12(conteudo, senha.encode() if senha else b"")
+        _ = p12.cert.certificate
+    except Exception:
+        raise HTTPException(400, "Certificado inválido ou senha incorreta.")
+
+    pasta = os.path.join(settings.DATA_DIR, "certs", "escritorio")
+    os.makedirs(pasta, exist_ok=True)
+    nome_arquivo = f"escritorio_{escritorio.id}_procuracao.pfx"
+    caminho = os.path.join(pasta, nome_arquivo)
+    with open(caminho, "wb") as f:
+        f.write(conteudo)
+
+    escritorio.cert_procuracao_path = caminho
+    escritorio.cert_procuracao_senha = senha
+    await db.commit()
+    return {"ok": True, "mensagem": "Certificado de procuração salvo com sucesso."}
 
 
 def _enviar_email_sync(host: str, port: int, usuario: str, senha: str,

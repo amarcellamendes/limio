@@ -1855,6 +1855,39 @@
           </div>
         </div>
 
+        <!-- Certificado de Procuração (e-CAC / eSocial) -->
+        <div class="card border-teal-200">
+          <h3 class="font-semibold text-primary mb-1">Certificado A1 — Procuração e-CAC/eSocial</h3>
+          <p class="text-xs text-gray-500 mb-4">
+            Certificado digital da <strong>Mendes e Lima</strong> para acesso via procuração ao e-CAC e eSocial de todos os clientes.
+            Com ele, o sistema busca PGDAS-D e folha eSocial sem precisar de certificado individual por cliente.
+          </p>
+          <div class="flex items-center gap-3 mb-3">
+            <div x-show="configForm.cert_procuracao_configurado" class="flex items-center gap-2 text-green-700 text-sm font-medium bg-green-50 px-3 py-1.5 rounded-lg">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+              Certificado configurado
+            </div>
+            <div x-show="!configForm.cert_procuracao_configurado" class="text-amber-700 text-sm bg-amber-50 px-3 py-1.5 rounded-lg">
+              Nenhum certificado configurado — a busca usará o cert individual de cada cliente
+            </div>
+          </div>
+          <div class="flex items-end gap-3 flex-wrap">
+            <div>
+              <label class="label text-xs">Arquivo .pfx</label>
+              <input type="file" accept=".pfx" id="certProcuracaoFile"
+                     class="text-sm text-gray-600 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-teal-50 file:text-teal-700 hover:file:bg-teal-100" />
+            </div>
+            <div>
+              <label class="label text-xs">Senha do certificado</label>
+              <input type="password" id="certProcuracaoSenha" class="input text-sm" placeholder="Senha do .pfx" />
+            </div>
+            <button class="btn-primary text-sm" @click="uploadCertProcuracao()">Salvar Certificado</button>
+          </div>
+          <p class="text-xs text-gray-400 mt-2">
+            O arquivo .pfx fica armazenado no servidor e nunca é compartilhado com terceiros.
+          </p>
+        </div>
+
         <div class="card">
           <h3 class="font-semibold text-primary mb-2">Plano Atual</h3>
           <div class="flex items-center justify-between">
@@ -3654,7 +3687,7 @@ function app() {
     uploadingCert: { nfse: false, nfe: false },
     pendingCerts: { nfse: null, nfe: null },
     pendingCertNames: { nfse: '', nfe: '' },
-    configForm: { nome:'', email:'', telefone:'', crc:'', nota_enviar_email:false, nota_salvar_pasta:false, nota_pasta_destino:'', smtp_host:'', smtp_port:587, smtp_usuario:'', smtp_senha:'' },
+    configForm: { nome:'', email:'', telefone:'', crc:'', nota_enviar_email:false, nota_salvar_pasta:false, nota_pasta_destino:'', smtp_host:'', smtp_port:587, smtp_usuario:'', smtp_senha:'', cert_procuracao_configurado: false },
 
     // Calendário Fiscal
     calAno: new Date().getFullYear(),
@@ -3823,6 +3856,30 @@ function app() {
       else {
         const d = await r?.json().catch(() => ({}))
         this.showToast(d.detail || 'Erro ao enviar e-mail de teste. Verifique as configurações SMTP.', 'error')
+      }
+    },
+
+    async uploadCertProcuracao() {
+      const input = document.getElementById('certProcuracaoFile')
+      const senhaEl = document.getElementById('certProcuracaoSenha')
+      if (!input?.files?.length) { this.showToast('Selecione um arquivo .pfx', 'error'); return }
+      const fd = new FormData()
+      fd.append('arquivo', input.files[0])
+      fd.append('senha', senhaEl?.value || '')
+      try {
+        const r = await fetch(`${API}/auth/me/upload-cert-procuracao`, {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + this.token },
+          body: fd,
+        })
+        const d = await r.json()
+        if (!r.ok) throw new Error(d.detail || 'Erro ao salvar certificado')
+        this.configForm.cert_procuracao_configurado = true
+        if (senhaEl) senhaEl.value = ''
+        if (input) input.value = ''
+        this.showToast('Certificado de procuração salvo!')
+      } catch(e) {
+        this.showToast(e.message || 'Erro ao salvar certificado', 'error')
       }
     },
 
