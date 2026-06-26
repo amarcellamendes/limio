@@ -420,6 +420,36 @@ async def _playwright_ok() -> bool:
         return False
 
 
+def _env_sem_proxy() -> dict:
+    """Retorna cópia do ambiente do processo sem variáveis de proxy SOCKS/HTTP.
+    Passada ao Chromium via `env=` para que o processo filho não herde o proxy
+    injetado pelo Railway.
+    """
+    _PROXY_KEYS = {
+        'all_proxy', 'http_proxy', 'https_proxy',
+        'socks_proxy', 'socks4_proxy', 'socks5_proxy',
+        'no_proxy', 'proxy',
+    }
+    return {
+        k: v for k, v in os.environ.items()
+        if k.lower() not in _PROXY_KEYS
+    }
+
+
+_CHROMIUM_ARGS = [
+    "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+    "--disable-blink-features=AutomationControlled",
+    "--no-proxy-server",          # ignora proxy de env vars
+    "--proxy-bypass-list=*",      # bypass para todos os hosts
+]
+
+_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/125.0.0.0 Safari/537.36"
+)
+
+
 async def _run_playwright_multi(cert_pem: bytes, key_pem: bytes, origins: list[str], tarefa_fn) -> dict:
     """Igual a _run_playwright mas registra o certificado em múltiplas origens."""
     from playwright.async_api import async_playwright
@@ -433,19 +463,14 @@ async def _run_playwright_multi(cert_pem: bytes, key_pem: bytes, origins: list[s
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
-                      "--disable-blink-features=AutomationControlled", "--no-proxy-server"],
+                args=_CHROMIUM_ARGS,
+                env=_env_sem_proxy(),
             )
             certs = [{"origin": o, "certPath": cert_path, "keyPath": key_path} for o in origins]
             context = await browser.new_context(
                 client_certificates=certs,
                 ignore_https_errors=True,
-                proxy={"server": "direct://"},
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/125.0.0.0 Safari/537.36"
-                ),
+                user_agent=_UA,
             )
             page = await context.new_page()
             try:
@@ -467,17 +492,12 @@ async def _run_playwright_no_cert(tarefa_fn) -> dict:
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
-                  "--disable-blink-features=AutomationControlled", "--no-proxy-server"],
+            args=_CHROMIUM_ARGS,
+            env=_env_sem_proxy(),
         )
         context = await browser.new_context(
             ignore_https_errors=True,
-            proxy={"server": "direct://"},
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/125.0.0.0 Safari/537.36"
-            ),
+            user_agent=_UA,
         )
         page = await context.new_page()
         try:
@@ -499,18 +519,13 @@ async def _run_playwright(cert_pem: bytes, key_pem: bytes, origin: str, tarefa_f
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
-                      "--disable-blink-features=AutomationControlled", "--no-proxy-server"],
+                args=_CHROMIUM_ARGS,
+                env=_env_sem_proxy(),
             )
             context = await browser.new_context(
                 client_certificates=[{"origin": origin, "certPath": cert_path, "keyPath": key_path}],
                 ignore_https_errors=True,
-                proxy={"server": "direct://"},
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/125.0.0.0 Safari/537.36"
-                ),
+                user_agent=_UA,
             )
             page = await context.new_page()
             try:
