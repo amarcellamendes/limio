@@ -424,6 +424,7 @@ async def _run_playwright_multi(cert_pem: bytes, key_pem: bytes, origins: list[s
             context = await browser.new_context(
                 client_certificates=certs,
                 ignore_https_errors=True,
+                proxy={"server": "direct://"},
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -451,10 +452,11 @@ async def _run_playwright_no_cert(tarefa_fn) -> dict:
         browser = await pw.chromium.launch(
             headless=True,
             args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
-                  "--disable-blink-features=AutomationControlled"],
+                  "--disable-blink-features=AutomationControlled", "--no-proxy-server"],
         )
         context = await browser.new_context(
             ignore_https_errors=True,
+            proxy={"server": "direct://"},
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -487,6 +489,7 @@ async def _run_playwright(cert_pem: bytes, key_pem: bytes, origin: str, tarefa_f
             context = await browser.new_context(
                 client_certificates=[{"origin": origin, "certPath": cert_path, "keyPath": key_path}],
                 ignore_https_errors=True,
+                proxy={"server": "direct://"},
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -590,13 +593,12 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
                 pass
 
         # 2. Vai para a home do e-CAC (onde fica o botão "Alterar perfil de acesso")
-        current_url = page.url
-        if "ecac" not in current_url.lower() and "cav" not in current_url.lower():
-            await page.goto(
-                "https://cav.receita.fazenda.gov.br/ecac/",
-                wait_until="domcontentloaded", timeout=_PGDAS_TIMEOUT,
-            )
-            await page.wait_for_timeout(3000)
+        # Sempre navega para /ecac/ — o login apenas apresenta o cert mas não redireciona lá
+        await page.goto(
+            "https://cav.receita.fazenda.gov.br/ecac/",
+            wait_until="domcontentloaded", timeout=_PGDAS_TIMEOUT,
+        )
+        await page.wait_for_timeout(3000)
 
         # 3. Clica em "Alterar perfil de acesso" para acessar como procurador do cliente
         for sel in [
