@@ -291,6 +291,22 @@ async def consultar_certidao_auto(
     try:
         res = await _executar_consulta_certidao(cert.tipo, cnpj, uf, cliente)
 
+        # Salva PDF retornado pelo Playwright (arquivo temporário)
+        pdf_temp = res.pop("pdf_temp_path", None)
+        if pdf_temp and os.path.exists(pdf_temp):
+            try:
+                from ..config import settings as _cfg
+                import shutil as _shutil
+                pasta_pdf = os.path.join(_cfg.DATA_DIR, "certidoes",
+                                         str(escritorio.id), str(cert.cliente_id))
+                os.makedirs(pasta_pdf, exist_ok=True)
+                nome_pdf = f"{cert.tipo}_{date.today().isoformat()}.pdf"
+                caminho_pdf = os.path.join(pasta_pdf, nome_pdf)
+                _shutil.move(pdf_temp, caminho_pdf)
+                cert.arquivo_path = caminho_pdf
+            except Exception:
+                pass
+
         # Atualiza certidão com os dados retornados
         cert.data_consulta = datetime.utcnow()
         cert.status = res.get("status", cert.status)
@@ -1461,14 +1477,20 @@ async def _consultar_cndt_tst(cnpj: str) -> dict:
                 break
             except Exception:
                 pass
-        for sel in ['button[type="submit"]', 'input[type="submit"]', 'input[type="image"]', 'a:has-text("Consultar")', 'button:has-text("Emitir")']:
+        for sel in ['button[type="submit"]', 'input[type="submit"]', 'input[type="image"]',
+                    'a:has-text("Consultar")', 'button:has-text("Emitir")', 'button:has-text("Pesquisar")']:
             try:
                 await page.click(sel, timeout=3_000)
                 break
             except Exception:
                 pass
         await page.wait_for_load_state("networkidle", timeout=40_000)
-        return _parse_certidao_html(await page.content(), "cndt_tst", page_url=page.url)
+        result = _parse_certidao_html(await page.content(), "cndt_tst", page_url=page.url)
+
+        if result["status"] == "regular":
+            result = await _capturar_pdf_certidao(page, result)
+
+        return result
 
     try:
         return await _run_playwright_no_cert(_tarefa)
@@ -1531,6 +1553,8 @@ async def _consultar_cndt_trt(cnpj: str, uf: str) -> dict:
         await page.wait_for_load_state("networkidle", timeout=40_000)
         result = _parse_certidao_html(await page.content(), "cndt_trt", page_url=page.url)
         result["observacao"] = f"TRT consultado: {uf} → {trt_url}"
+        if result["status"] == "regular":
+            result = await _capturar_pdf_certidao(page, result)
         return result
 
     try:
@@ -1579,7 +1603,10 @@ async def _consultar_cnd_estadual(cnpj: str, uf: str, tipo: str) -> dict:
             except Exception:
                 pass
         await page.wait_for_load_state("networkidle", timeout=40_000)
-        return _parse_certidao_html(await page.content(), tipo, page_url=page.url)
+        result = _parse_certidao_html(await page.content(), tipo, page_url=page.url)
+        if result["status"] == "regular":
+            result = await _capturar_pdf_certidao(page, result)
+        return result
 
     try:
         return await _run_playwright_no_cert(_tarefa)
@@ -2272,6 +2299,84 @@ def _parse_esocial_lxml(html: str, ano: int) -> list:
     return folhas
 
 
+async def _capturar_pdf_certidao(page, result: dict) -> dict:
+    """
+    Após detectar certidão Regular, tenta capturar o PDF que o portal abre
+    numa nova aba ou via download direto. Retorna result enriquecido com pdf_temp_path.
+    """
+    context = page.context
+    novas_abas: list = []
+    context.on("page", lambda p: novas_abas.append(p))
+
+    # Seletores de botões de download/impressão comuns nos portais brasileiros
+    _SELS_PDF = [
+        'a:has-text("Emitir")', 'button:has-text("Emitir")',
+        'a:has-text("PDF")', 'button:has-text("PDF")',
+        'a:has-text("Imprimir")', 'button:has-text("Imprimir")',
+        'a:has-text("Baixar")', 'button:has-text("Baixar")',
+        'a:has-text("Download")', 'a[href*=".pdf" i]',
+        'input[type="image"]',
+    ]
+    for sel in _SELS_PDF:
+        try:
+            el = page.locator(sel).first
+            if await el.count() > 0:
+                await el.click(timeout=5_000)
+                await page.wait_for_timeout(5_000)
+                break
+        except Exception:
+            pass
+
+    # Verifica se abriu nova aba com PDF
+    for nova in novas_abas:
+        try:
+            await nova.wait_for_load_state("load", timeout=15_000)
+            url_nova = nova.url
+            if url_nova and url_nova.startswith("http"):
+                result.setdefault("observacao", "")
+                # Tenta baixar os bytes da nova aba
+                body = await nova.evaluate("() => document.body ? document.body.innerText : ''")
+                # Acessa os bytes da resposta através de fetch
+                try:
+                    import httpx as _httpx
+                    async with _httpx.AsyncClient(
+                        verify=False, timeout=20, follow_redirects=True,
+                        headers={"User-Agent": "Mozilla/5.0 Chrome/125.0.0.0"},
+                    ) as hx:
+                        r = await hx.get(url_nova)
+                        if r.status_code == 200 and len(r.content) > 1000:
+                            tmp = tempfile.mktemp(suffix=".pdf")
+                            with open(tmp, "wb") as f:
+                                f.write(r.content)
+                            result["pdf_temp_path"] = tmp
+                            break
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # Tenta download via Playwright se a página atual abrir download
+    if "pdf_temp_path" not in result:
+        try:
+            async with page.expect_download(timeout=8_000) as dl_info:
+                for sel in _SELS_PDF:
+                    try:
+                        el = page.locator(sel).first
+                        if await el.count() > 0:
+                            await el.click(timeout=3_000)
+                            break
+                    except Exception:
+                        pass
+            dl = await dl_info.value
+            tmp = tempfile.mktemp(suffix=".pdf")
+            await dl.save_as(tmp)
+            result["pdf_temp_path"] = tmp
+        except Exception:
+            pass
+
+    return result
+
+
 def _parse_certidao_html(html: str, tipo: str, page_url: str = "") -> dict:
     """Extrai status e validade de uma certidão a partir do HTML retornado pelo portal."""
     html_up = html.upper()
@@ -2320,6 +2425,30 @@ def _parse_certidao_html(html: str, tipo: str, page_url: str = "") -> dict:
     candidatas: list[date] = []
     emissoes: list[date] = []
 
+    _MESES_PT = {
+        'janeiro': 1, 'fevereiro': 2, 'marco': 3, 'março': 3,
+        'abril': 4, 'maio': 5, 'junho': 6, 'julho': 7,
+        'agosto': 8, 'setembro': 9, 'outubro': 10,
+        'novembro': 11, 'dezembro': 12,
+    }
+
+    def _parse_data_escrita(txt: str) -> list[date]:
+        """Extrai datas no formato 'DD de Mês de AAAA'."""
+        datas = []
+        for m in re.finditer(
+            r'(\d{1,2})\s+de\s+(janeiro|fevereiro|mar[çc]o|abril|maio|junho|julho|'
+            r'agosto|setembro|outubro|novembro|dezembro)\s+de\s+(\d{4})',
+            txt, re.IGNORECASE,
+        ):
+            mes_key = m.group(2).lower().replace('ç', 'c')
+            mes = _MESES_PT.get(mes_key)
+            if mes:
+                try:
+                    datas.append(date(int(m.group(3)), mes, int(m.group(1))))
+                except ValueError:
+                    pass
+        return datas
+
     # Padrões prioritários (contexto de validade)
     for pat in [
         r'v[aá]lid[ao]\s+(?:at[eé]|até)\s*:?\s*(\d{2}/\d{2}/\d{4})',
@@ -2333,6 +2462,21 @@ def _parse_certidao_html(html: str, tipo: str, page_url: str = "") -> dict:
         for m in re.finditer(pat, html, re.IGNORECASE):
             try:
                 candidatas.append(datetime.strptime(m.group(1), "%d/%m/%Y").date())
+            except ValueError:
+                pass
+
+    # Datas escritas no contexto de validade ("válida até 23 de dezembro de 2026")
+    for m in re.finditer(
+        r'v[aá]lid[ao]\s+(?:at[eé]|até)[^.]{0,10}'
+        r'(\d{1,2})\s+de\s+(janeiro|fevereiro|mar[çc]o|abril|maio|junho|julho|'
+        r'agosto|setembro|outubro|novembro|dezembro)\s+de\s+(\d{4})',
+        html, re.IGNORECASE,
+    ):
+        mes_key = m.group(2).lower().replace('ç', 'c')
+        mes = _MESES_PT.get(mes_key)
+        if mes:
+            try:
+                candidatas.append(date(int(m.group(3)), mes, int(m.group(1))))
             except ValueError:
                 pass
 
@@ -2350,6 +2494,20 @@ def _parse_certidao_html(html: str, tipo: str, page_url: str = "") -> dict:
             except ValueError:
                 pass
 
+    # Datas de emissão escritas por extenso
+    for pat in [
+        r'emitida?\s+em[^.]{0,5}(\d{1,2})\s+de\s+(janeiro|fevereiro|mar[çc]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\s+de\s+(\d{4})',
+        r'expedida\s+em[^.]{0,5}(\d{1,2})\s+de\s+(janeiro|fevereiro|mar[çc]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\s+de\s+(\d{4})',
+    ]:
+        for m in re.finditer(pat, html, re.IGNORECASE):
+            mes_key = m.group(2).lower().replace('ç', 'c')
+            mes = _MESES_PT.get(mes_key)
+            if mes:
+                try:
+                    emissoes.append(date(int(m.group(3)), mes, int(m.group(1))))
+                except ValueError:
+                    pass
+
     # Prioriza datas futuras; se não houver, usa a mais recente
     futuras = [d for d in candidatas if d > hoje]
     if futuras:
@@ -2357,23 +2515,33 @@ def _parse_certidao_html(html: str, tipo: str, page_url: str = "") -> dict:
     elif candidatas:
         data_validade = max(candidatas)
 
-    # Se não achou data de validade explícita mas achou data de emissão,
-    # calcula validade padrão por tipo de certidão (regra legal BR)
+    _VALIDADE_DIAS = {
+        "cnd_federal": 180, "cndt_tst": 180, "cndt_trt": 180,
+        "cnd_fgts": 90, "cnd_estadual": 180, "cnd_estadual_nc": 180,
+        "cnd_municipal": 180, "cnd_falencia": 90,
+    }
+    from datetime import timedelta as _td
+
+    # Se não achou data de validade mas achou emissão → calcula pela regra legal
     if not data_validade and emissoes and status == "regular":
-        from datetime import timedelta
-        _VALIDADE_DIAS = {
-            "cnd_federal": 180, "cndt_tst": 180, "cndt_trt": 180,
-            "cnd_fgts": 90, "cnd_estadual": 180, "cnd_estadual_nc": 180,
-            "cnd_municipal": 180, "cnd_falencia": 90,
-        }
         dias = _VALIDADE_DIAS.get(tipo, 180)
         data_emissao = max(emissoes)
-        data_validade = data_emissao + timedelta(days=dias)
+        data_validade = data_emissao + _td(days=dias)
 
-    # Extrai número da certidão — exclui caminhos de arquivo, hashes e referências JS
+    # Se Regular mas não achou nem emissão → usa hoje como emissão
+    if not data_validade and status == "regular":
+        dias = _VALIDADE_DIAS.get(tipo, 180)
+        data_validade = hoje + _td(days=dias)
+
+    # Extrai número da certidão
     _EXTENSOES = ('.js', '.css', '.html', '.htm', '.php', '.asp', '.json', '.png', '.jpg')
     numero = None
     for pat in [
+        # Formatos específicos primeiro (CNDT, CND, CRF)
+        r'\bCNDT\s*[-:]?\s*([\d]{10,20}[-/]?\d*)',
+        r'\bCND\s*[-:]?\s*([\d]{6,20}[-/]?\d*)',
+        r'\bCRF\s*[-:]?\s*([\d]{6,20}[-/]?\d*)',
+        # Genéricos
         r'n[uú]mero\s*(?:da\s+certid[aã]o)?\s*:?\s*([A-Z0-9][A-Z0-9\-/.]{4,39})',
         r'certid[aã]o\s+n[oº°.]\s*:?\s*([A-Z0-9][A-Z0-9\-/.]{4,39})',
         r'c[oó]digo\s+(?:de\s+controle|de\s+verifica[cç][aã]o)\s*:?\s*([A-Z0-9][A-Z0-9\-]{5,29})',
@@ -2381,11 +2549,10 @@ def _parse_certidao_html(html: str, tipo: str, page_url: str = "") -> dict:
     ]:
         for m in re.finditer(pat, html, re.IGNORECASE):
             n = m.group(1).strip().rstrip('.')
-            # Deve conter pelo menos um dígito para ser um número de certidão real
             if not re.search(r'\d', n):
                 continue
             if not any(n.lower().endswith(ext) for ext in _EXTENSOES):
-                if not re.search(r'[a-f0-9]{8}-[a-f0-9]{4}', n.lower()):  # não é UUID
+                if not re.search(r'[a-f0-9]{8}-[a-f0-9]{4}', n.lower()):
                     numero = n
                     break
         if numero:
