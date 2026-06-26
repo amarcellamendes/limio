@@ -64,9 +64,16 @@ async def buscar_pgdas(
         cert_pem, key_pem = await _cert_ou_erro(cliente, senha)
 
     try:
+        # Inclui GOV.BR SSO — o e-CAC redireciona para acesso.gov.br para autenticação por cert
         resultado = await _run_playwright_multi(
             cert_pem, key_pem,
-            ["https://cav.receita.fazenda.gov.br", "https://www8.receita.fazenda.gov.br"],
+            [
+                "https://cav.receita.fazenda.gov.br",
+                "https://www8.receita.fazenda.gov.br",
+                "https://acesso.gov.br",
+                "https://sso.acesso.gov.br",
+                "https://idg.receita.fazenda.gov.br",
+            ],
             lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano, usar_procuracao),
         )
         for rec in resultado.get("receitas", []):
@@ -106,10 +113,12 @@ async def buscar_esocial(
         cert_pem, key_pem = await _cert_ou_erro(cliente, senha)
 
     try:
+        # empregador.esocial.gov.br não resolve DNS no Railway — usar www.esocial.gov.br
         resultado = await _run_playwright_multi(
             cert_pem, key_pem,
-            ["https://empregador.esocial.gov.br", "https://login.esocial.gov.br",
-             "https://cav.receita.fazenda.gov.br"],
+            ["https://www.esocial.gov.br", "https://login.esocial.gov.br",
+             "https://cav.receita.fazenda.gov.br",
+             "https://acesso.gov.br", "https://sso.acesso.gov.br"],
             lambda p, c: _tarefa_esocial(p, c, cliente.cnpj, ano, usar_procuracao),
         )
         for f in resultado.get("folhas", []):
@@ -658,6 +667,20 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
             wait_until="domcontentloaded", timeout=_PGDAS_TIMEOUT,
         )
         await page.wait_for_timeout(3000)
+        # Verifica se autenticou — se voltou para login, cert não foi aceito
+        url_apos_ecac = page.url
+        if "autenticacao" in url_apos_ecac.lower() or "login" in url_apos_ecac.lower():
+            titulo_pg = await page.title()
+            return {
+                "receitas": [],
+                "aviso": (
+                    f"Autenticação com certificado falhou no e-CAC. "
+                    f"URL após /ecac/: {url_apos_ecac} | Título: {titulo_pg}. "
+                    f"Verifique se o certificado (.pfx) da Mendes e Lima foi aceito pelo GOV.BR. "
+                    f"O e-CAC pode estar redirecionando o login de certificado para acesso.gov.br "
+                    f"— tente renovar o certificado em Configurações."
+                ),
+            }
 
         # 3. Clica em "Alterar perfil de acesso" para acessar como procurador do cliente
         for sel in [
@@ -873,13 +896,28 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
     ano_ant = _hoje.year if _hoje.month > 1 else _hoje.year - 1
 
     # ── Login (mesmo passo para os dois fluxos) ───────────────────────────────
+    # empregador.esocial.gov.br não resolve DNS no Railway — portal principal em www
     await page.goto(
-        "https://empregador.esocial.gov.br/",
+        "https://www.esocial.gov.br/portal/",
         wait_until="domcontentloaded", timeout=_ESOCIAL_TIMEOUT,
     )
     await page.wait_for_timeout(4000)
+    # Tenta navegar para a área do empregador via www
+    for sel in ["a:has-text('Empregador')", "a[href*='empregador']", "a[href*='Empregador']",
+                "a:has-text('Acessar')", "button:has-text('Acessar')"]:
+        try:
+            el = page.locator(sel).first
+            if await el.count() > 0:
+                await el.click()
+                await page.wait_for_load_state("domcontentloaded", timeout=20000)
+                await page.wait_for_timeout(2000)
+                break
+        except Exception:
+            pass
+    # Clica em Certificado Digital para autenticar
     for sel in ["a:has-text('Certificado Digital')", "button:has-text('Certificado')",
-                "input[value*='ertificado']", ".certificado"]:
+                "input[value*='ertificado']", ".certificado",
+                "a:has-text('certificado')", "button:has-text('certificado digital')"]:
         try:
             el = page.locator(sel).first
             if await el.count() > 0:
