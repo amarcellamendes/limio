@@ -226,7 +226,7 @@ async def buscar_lote(
 # ─── Certidões automáticas ────────────────────────────────────────────────────
 
 @router.get("/diagnostico-rede")
-async def diagnostico_rede(escritorio: Escritorio = Depends(get_escritorio_atual)):
+async def diagnostico_rede():
     """Testa conectividade com portais do governo via httpx (sem Playwright).
     Retorna status HTTP ou erro por URL — útil para diagnosticar bloqueios de rede.
     """
