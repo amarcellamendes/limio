@@ -134,15 +134,14 @@ async def buscar_esocial(
         if esocial_ip:
             extra_args.append(f"--host-resolver-rules=MAP empregador.esocial.gov.br {esocial_ip}")
 
-        resultado = await _run_ecac_com_proxy(
-            tarefa_fn=lambda p, c: _tarefa_esocial(p, c, cliente.cnpj, ano, usar_procuracao),
-            cert_pem=cert_pem,
-            key_pem=key_pem,
-            origins=["https://empregador.esocial.gov.br", "https://www.esocial.gov.br",
-                     "https://login.esocial.gov.br", "https://acesso.gov.br",
-                     "https://sso.acesso.gov.br"],
+        # Sem proxy: proxy faz DNS próprio e ignora --host-resolver-rules
+        resultado = await _run_playwright_multi(
+            cert_pem, key_pem,
+            ["https://empregador.esocial.gov.br", "https://www.esocial.gov.br",
+             "https://login.esocial.gov.br", "https://acesso.gov.br",
+             "https://sso.acesso.gov.br"],
+            lambda p, c: _tarefa_esocial(p, c, cliente.cnpj, ano, usar_procuracao),
             extra_chromium_args=extra_args,
-            prefer_brazil=True,
         )
         for f in resultado.get("folhas", []):
             await _upsert_folha(db, escritorio.id, cliente.id, f["competencia"], f["valor_total_folha"])
