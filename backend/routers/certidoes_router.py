@@ -4,10 +4,14 @@ Handles: CND Federal, CND Falência, CND FGTS, CNDT TST, CNDT TRT,
          CND Estadual, CND Estadual NC, CND Municipal
 """
 
+import io
+import os
+import zipfile
 from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -514,3 +518,73 @@ async def consultar_lote(
         "detalhe": atualizadas,
         "detalhe_erros": erros,
     }
+
+
+# ---------------------------------------------------------------------------
+# Download de PDFs
+# ---------------------------------------------------------------------------
+
+@router.get("/{certidao_id}/download-pdf")
+async def download_pdf(
+    certidao_id: int,
+    db: AsyncSession = Depends(get_db),
+    escritorio: Escritorio = Depends(get_escritorio_atual),
+):
+    """Baixa o PDF salvo de uma certidão."""
+    result = await db.execute(
+        select(Certidao).where(
+            Certidao.id == certidao_id,
+            Certidao.escritorio_id == escritorio.id,
+        )
+    )
+    cert = result.scalar_one_or_none()
+    if cert is None:
+        raise HTTPException(404, "Certidão não encontrada.")
+    if not cert.arquivo_path or not os.path.exists(cert.arquivo_path):
+        raise HTTPException(404, "PDF não disponível para esta certidão.")
+
+    nome_arquivo = os.path.basename(cert.arquivo_path)
+    return FileResponse(
+        cert.arquivo_path,
+        media_type="application/pdf",
+        filename=nome_arquivo,
+    )
+
+
+class DownloadZipPayload(BaseModel):
+    ids: list[int]
+
+
+@router.post("/download-zip")
+async def download_zip(
+    payload: DownloadZipPayload,
+    db: AsyncSession = Depends(get_db),
+    escritorio: Escritorio = Depends(get_escritorio_atual),
+):
+    """Gera e baixa um ZIP com os PDFs das certidões selecionadas."""
+    if not payload.ids:
+        raise HTTPException(400, "Selecione ao menos uma certidão.")
+
+    stmt = select(Certidao).where(
+        Certidao.escritorio_id == escritorio.id,
+        Certidao.id.in_(payload.ids),
+    )
+    result = await db.execute(stmt)
+    certs = result.scalars().all()
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for cert in certs:
+            if cert.arquivo_path and os.path.exists(cert.arquivo_path):
+                nome = os.path.basename(cert.arquivo_path)
+                zf.write(cert.arquivo_path, nome)
+
+    buf.seek(0)
+    if buf.getbuffer().nbytes == 0:
+        raise HTTPException(404, "Nenhuma das certidões selecionadas possui PDF disponível.")
+
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=certidoes.zip"},
+    )

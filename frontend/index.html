@@ -1954,11 +1954,30 @@
         </div>
       </template>
 
+      <!-- Barra de ações para seleção múltipla -->
+      <div x-show="certidoes.selecionadas.length > 0" x-cloak
+           class="mb-3 flex items-center gap-3 px-4 py-2.5 bg-teal-50 border border-teal-200 rounded-xl">
+        <span class="text-sm font-semibold text-teal-800"
+              x-text="`${certidoes.selecionadas.length} certidão(ões) selecionada(s)`"></span>
+        <button @click="downloadCertidoesZip()"
+                class="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold rounded-lg transition">
+          ⬇ Baixar ZIP
+        </button>
+        <button @click="certidoes.selecionadas = []"
+                class="text-xs text-gray-500 hover:text-gray-700 px-2 py-1">Limpar seleção</button>
+      </div>
+
       <!-- Tabela de certidões -->
       <div class="card overflow-x-auto">
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b border-gray-100 text-xs text-gray-500 uppercase">
+              <th class="py-2 pr-2 w-8">
+                <input type="checkbox"
+                       :checked="certidoes.selecionadas.length > 0 && certidoes.selecionadas.length === certidoes.lista.length"
+                       @change="selecionarTodasCertidoes()"
+                       class="w-4 h-4 accent-teal-600 cursor-pointer">
+              </th>
               <th class="text-left py-2 pr-3">Cliente</th>
               <th class="text-left py-2 pr-3">Tipo</th>
               <th class="text-left py-2 pr-3">Nº Certidão</th>
@@ -1971,10 +1990,17 @@
           </thead>
           <tbody>
             <template x-if="certidoes.lista.length === 0">
-              <tr><td colspan="8" class="py-8 text-center text-gray-400 text-sm">Nenhuma certidão cadastrada. Clique em "+ Nova Certidão" para começar.</td></tr>
+              <tr><td colspan="9" class="py-8 text-center text-gray-400 text-sm">Nenhuma certidão cadastrada. Clique em "+ Nova Certidão" para começar.</td></tr>
             </template>
             <template x-for="cert in certidoes.lista" :key="cert.id">
-              <tr class="border-b border-gray-50 hover:bg-gray-50">
+              <tr class="border-b border-gray-50 hover:bg-gray-50"
+                  :class="isCertidaoSelecionada(cert.id) ? 'bg-teal-50' : ''">
+                <td class="py-2 pr-2">
+                  <input type="checkbox"
+                         :checked="isCertidaoSelecionada(cert.id)"
+                         @change="toggleCertidaoSelecionada(cert.id)"
+                         class="w-4 h-4 accent-teal-600 cursor-pointer">
+                </td>
                 <td class="py-2 pr-3 font-medium text-xs" x-text="cert.cliente_razao_social || '—'"></td>
                 <td class="py-2 pr-3">
                   <span class="text-xs" x-text="cert.nome_descritivo || certidoes.tipoNome(cert.tipo)"></span>
@@ -1994,6 +2020,8 @@
                 <td class="py-2">
                   <div class="flex gap-1 flex-wrap">
                     <button @click="consultarCertidaoAuto(cert)" class="text-xs bg-teal-600 hover:bg-teal-700 text-white px-2 py-1 rounded-lg">🔍 Auto</button>
+                    <button x-show="cert.arquivo_path" @click="downloadCertidaoPdf(cert)"
+                            class="text-xs border border-teal-400 text-teal-700 hover:bg-teal-50 px-2 py-1 rounded-lg" title="Baixar PDF">📄 PDF</button>
                     <button @click="abrirCertidaoModal(cert)" class="btn-secondary text-xs px-2 py-1">Editar</button>
                     <button @click="excluirCertidao(cert.id)" class="text-xs text-red-500 hover:text-red-700 px-2 py-1">✕</button>
                   </div>
@@ -3612,7 +3640,8 @@ function app() {
     // Integrações RF/eSocial
     integracao: { buscandoPgdas: false, buscandoEsocial: false, buscandoLote: false, buscandoFaturamentoLP: false, avisoFaturamentoLP: '', modalSenha: false, senhaTemp: '', acaoAposSenha: null },
     certidoes: {
-      lista: [], vencendo: [], filtroCliente: '', modalShow: false, modalEditando: false, modalId: null, modalErro: '',
+      lista: [], vencendo: [], filtroCliente: '', selecionadas: [],
+      modalShow: false, modalEditando: false, modalId: null, modalErro: '',
       consultandoAuto: false, autoResultado: null, buscandoLote: false,
       portalInfo: { nome: '', url: '' },
       form: { cliente_id: '', tipo: '', status: 'pendente', nome_descritivo: '', numero_certidao: '', data_consulta: '', data_validade: '', data_agendamento: '', observacao: '', enviar_email: false, pasta_destino: '' },
@@ -5176,7 +5205,62 @@ function app() {
 
     // ─── CERTIDÕES ─────────────────────────────────────
 
+    toggleCertidaoSelecionada(id) {
+      const i = this.certidoes.selecionadas.indexOf(id)
+      if (i >= 0) this.certidoes.selecionadas.splice(i, 1)
+      else this.certidoes.selecionadas.push(id)
+    },
+    isCertidaoSelecionada(id) {
+      return this.certidoes.selecionadas.includes(id)
+    },
+    selecionarTodasCertidoes() {
+      if (this.certidoes.selecionadas.length === this.certidoes.lista.length) {
+        this.certidoes.selecionadas = []
+      } else {
+        this.certidoes.selecionadas = this.certidoes.lista.map(c => c.id)
+      }
+    },
+    async downloadCertidaoPdf(cert) {
+      try {
+        const res = await fetch(`/api/certidoes/${cert.id}/download-pdf`, {
+          headers: { Authorization: `Bearer ${this.token}` }
+        })
+        if (!res.ok) { const e = await res.json().catch(()=>{}); throw new Error(e?.detail || 'PDF não disponível') }
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${cert.tipo}_${cert.id}.pdf`
+        a.click()
+        URL.revokeObjectURL(url)
+      } catch(e) {
+        this.showToast('Erro ao baixar PDF: ' + (e.message || e), 'error')
+      }
+    },
+    async downloadCertidoesZip() {
+      const ids = this.certidoes.selecionadas
+      if (!ids.length) return
+      try {
+        const res = await fetch('/api/certidoes/download-zip', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids })
+        })
+        if (!res.ok) { const e = await res.json().catch(()=>{}); throw new Error(e?.detail || 'Erro ao gerar ZIP') }
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = 'certidoes.zip'
+        a.click()
+        URL.revokeObjectURL(url)
+      } catch(e) {
+        this.showToast('Erro ao baixar ZIP: ' + (e.message || e), 'error')
+      }
+    },
+
     async carregarCertidoes() {
+      this.certidoes.selecionadas = []
       try {
         const q = this.certidoes.filtroCliente ? `?cliente_id=${this.certidoes.filtroCliente}` : ''
         const lista = await this.api(`/api/certidoes${q}`)
