@@ -325,7 +325,7 @@ async def _executar_consulta_certidao(tipo: str, cnpj: str, uf: str, cliente: Cl
     if tipo == "cnd_municipal":
         return await _consultar_cnd_municipal(cnpj, cliente.municipio or "", uf)
     if tipo == "cnd_falencia":
-        return await _consultar_cnd_falencia(cnpj, uf)
+        return await _consultar_cnd_falencia(cnpj, uf, cliente.razao_social or "")
     raise HTTPException(400, f"Tipo '{tipo}' ainda não suportado para consulta automática.")
 
 
@@ -1707,21 +1707,222 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
         return {"status": "em_analise", "observacao": f"Erro na consulta prefeitura {municipio}: {e}. Acesse o portal da prefeitura."}
 
 
-async def _consultar_cnd_falencia(cnpj: str, uf: str = "AM") -> dict:
-    """Certidão de Falência/Recuperação Judicial — emitida pelos Tribunais de Justiça estaduais."""
-    import httpx
+async def _consultar_cnd_falencia(cnpj: str, uf: str = "AM", razao_social: str = "") -> dict:
+    """Certidão de Falência/Recuperação Judicial — emitida pelos Tribunais de Justiça estaduais.
+    Para AM: fluxo completo TJAM (SAJ) — preenchimento automático + download via número do pedido.
+    """
+    cnpj_digits = re.sub(r'\D', '', cnpj)
+    uf_upper = uf.upper()
 
-    # TJAM exige fluxo com verificação por e-mail (não automatizável)
-    if uf.upper() == "AM":
-        return {
-            "status": "em_analise",
-            "observacao": (
-                "A certidão de falência do TJAM exige verificação por e-mail e não pode ser emitida automaticamente. "
-                "Acesse https://consultasaj.tjam.jus.br/sco/abrirCadastro.do, preencha CNPJ, razão social "
-                "e e-mail do escritório para receber o código de acesso à certidão."
-            ),
-        }
+    # ── TJAM — fluxo automatizado (número do pedido aparece na página após envio) ──
+    if uf_upper == "AM":
+        if not await _playwright_ok():
+            return {"status": "em_analise",
+                    "observacao": "Playwright não disponível. Acesse: https://consultasaj.tjam.jus.br/sco/abrirCadastro.do"}
 
+        EMAIL_ESCRITORIO = "processos@mendeselimaconsultoria.com"
+        URL_CADASTRO = "https://consultasaj.tjam.jus.br/sco/abrirCadastro.do"
+        URL_DOWNLOAD = "https://consultasaj.tjam.jus.br/sco/abrirDownload.do"
+
+        async def _tarefa_tjam(page):
+            # ── Passo 1: preenche o formulário de pedido ─────────────────────
+            await page.goto(URL_CADASTRO, wait_until="domcontentloaded", timeout=40_000)
+            await page.wait_for_timeout(3000)
+
+            # Comarca: Manaus
+            for sel in ['select[name*="comarca" i]', 'select[id*="comarca" i]', 'select']:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() > 0:
+                        await el.select_option(label="Manaus")
+                        await page.wait_for_timeout(800)
+                        break
+                except Exception:
+                    pass
+
+            # Modelo: Falência e Recuperação de Crédito
+            for sel in ['select[name*="modelo" i]', 'select[id*="modelo" i]',
+                        'select[name*="assunto" i]']:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() > 0:
+                        await el.select_option(label="Falência e Recuperação de Crédito")
+                        await page.wait_for_timeout(500)
+                        break
+                except Exception:
+                    try:
+                        await el.select_option(value="F")
+                        break
+                    except Exception:
+                        pass
+
+            # Pessoa: Jurídica
+            for sel in ['input[value="J"]', 'input[value="Juridica"]', 'input[value="JURIDICA"]',
+                        'label:has-text("Jurídica") input', 'input[type="radio"]:nth-of-type(2)']:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() > 0:
+                        await el.check()
+                        await page.wait_for_timeout(500)
+                        break
+                except Exception:
+                    pass
+
+            # Razão Social
+            nome = razao_social.upper()[:100] if razao_social else ""
+            for sel in ['input[name*="razao" i]', 'input[id*="razao" i]',
+                        'input[name*="nome" i]', 'input[id*="nome" i]']:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() > 0:
+                        await el.fill(nome)
+                        break
+                except Exception:
+                    pass
+
+            # CNPJ
+            for sel in ['input[name*="cnpj" i]', 'input[id*="cnpj" i]',
+                        'input[name*="documento" i]']:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() > 0:
+                        await el.fill(cnpj_digits)
+                        break
+                except Exception:
+                    pass
+
+            # E-mail
+            for sel in ['input[type="email"]', 'input[name*="email" i]', 'input[id*="email" i]']:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() > 0:
+                        await el.fill(EMAIL_ESCRITORIO)
+                        break
+                except Exception:
+                    pass
+
+            # Tenta clicar no checkbox do reCAPTCHA v2
+            await page.wait_for_timeout(2000)
+            try:
+                frames = page.frames
+                for fr in frames:
+                    if "recaptcha" in (fr.url or "").lower():
+                        checkbox = fr.locator(".recaptcha-checkbox-border, #recaptcha-anchor")
+                        if await checkbox.count() > 0:
+                            await checkbox.click(timeout=5000)
+                            await page.wait_for_timeout(4000)
+                            break
+            except Exception:
+                pass
+
+            # Checkbox de confirmação
+            for sel in ['input[type="checkbox"]']:
+                try:
+                    els = page.locator(sel)
+                    count = await els.count()
+                    for i in range(count):
+                        el = els.nth(i)
+                        id_attr = await el.get_attribute("id") or ""
+                        if "captcha" not in id_attr.lower():
+                            await el.check()
+                except Exception:
+                    pass
+
+            # Clica em Enviar
+            for sel in ['input[value="Enviar"]', 'input[value="ENVIAR"]',
+                        'button:has-text("Enviar")', 'input[type="submit"]']:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() > 0:
+                        await el.click()
+                        await page.wait_for_load_state("domcontentloaded", timeout=30_000)
+                        await page.wait_for_timeout(3000)
+                        break
+                except Exception:
+                    pass
+
+            # ── Passo 2: extrai Número e Data do Pedido da página de confirmação ──
+            html_conf = await page.content()
+            num_m = re.search(
+                r'N[uú]mero\s+do\s+Pedido\s*[:\s]+(\d+)',
+                html_conf, re.I | re.DOTALL
+            )
+            dat_m = re.search(
+                r'Data\s+do\s+Pedido\s*[:\s]+(\d{2}/\d{2}/\d{4})',
+                html_conf, re.I | re.DOTALL
+            )
+
+            if not num_m or not dat_m:
+                # reCAPTCHA ou erro inesperado
+                title_m = re.search(r'<title[^>]*>([^<]+)</title>', html_conf, re.I)
+                title = title_m.group(1).strip() if title_m else "(sem título)"
+                return {
+                    "status": "em_analise",
+                    "observacao": (
+                        f"TJAM: formulário enviado mas o número do pedido não foi encontrado "
+                        f"(título da página: {title}). "
+                        f"Pode ser que o reCAPTCHA não foi validado automaticamente. "
+                        f"Acesse manualmente: {URL_CADASTRO}"
+                    ),
+                }
+
+            numero_pedido = num_m.group(1).strip()
+            data_pedido = dat_m.group(1).strip()
+
+            # ── Passo 3: faz o download da certidão ──────────────────────────
+            await page.goto(URL_DOWNLOAD, wait_until="domcontentloaded", timeout=30_000)
+            await page.wait_for_timeout(2000)
+
+            for sel in ['input[name*="numero" i]', 'input[id*="numero" i]',
+                        'input[type="text"]:nth-of-type(1)']:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() > 0:
+                        await el.fill(numero_pedido)
+                        break
+                except Exception:
+                    pass
+
+            for sel in ['input[name*="data" i]', 'input[id*="data" i]',
+                        'input[type="text"]:nth-of-type(2)']:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() > 0:
+                        await el.fill(data_pedido)
+                        break
+                except Exception:
+                    pass
+
+            for sel in ['input[value="Consultar"]', 'button:has-text("Consultar")',
+                        'input[type="submit"]']:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() > 0:
+                        await el.click()
+                        await page.wait_for_load_state("domcontentloaded", timeout=30_000)
+                        await page.wait_for_timeout(3000)
+                        break
+                except Exception:
+                    pass
+
+            html_cert = await page.content()
+            result = _parse_certidao_html(html_cert, "cnd_falencia", page_url=page.url)
+            # Usa o número do pedido como número da certidão se parser não achou
+            if not result.get("numero_certidao"):
+                result["numero_certidao"] = numero_pedido
+            if not result.get("observacao"):
+                result["observacao"] = f"Pedido TJAM nº {numero_pedido} de {data_pedido}"
+            return result
+
+        try:
+            return await _run_playwright_no_cert(_tarefa_tjam)
+        except Exception as e:
+            return {
+                "status": "em_analise",
+                "observacao": f"TJAM: {str(e)[:200]}. Acesse: {URL_CADASTRO}",
+            }
+
+    # ── Outros estados ────────────────────────────────────────────────────────
     _TJ_URLS = {
         "SP": "https://esaj.tjsp.jus.br/sco/abrirCadastro.do",
         "RJ": "https://certidaodigital.tjrj.jus.br/certidaodigital/",
@@ -1737,34 +1938,24 @@ async def _consultar_cnd_falencia(cnpj: str, uf: str = "AM") -> dict:
         "MS": "https://www.tjms.jus.br/servicos/certidao",
         "PA": "https://www.tjpa.jus.br/portalExterno/iniciarProcesso",
     }
-    uf_upper = uf.upper()
     url = _TJ_URLS.get(uf_upper, "")
-
     if not url:
         return {
             "status": "em_analise",
-            "observacao": (
-                f"A certidão de falência é emitida pelo TJ{uf_upper} (Tribunal de Justiça). "
-                f"Consulte manualmente em www.tj{uf.lower()}.jus.br"
-            ),
+            "observacao": f"Certidão de falência do TJ{uf_upper}: consulte manualmente em www.tj{uf.lower()}.jus.br",
         }
 
+    import httpx as _httpx
     headers = {"User-Agent": "Mozilla/5.0 Chrome/125.0.0.0"}
-    async with httpx.AsyncClient(verify=False, timeout=30, follow_redirects=True) as c:
+    async with _httpx.AsyncClient(verify=False, timeout=30, follow_redirects=True) as c:
         try:
-            r = await c.get(url, headers=headers)
+            r = await c.post(url, data={"cnpj": cnpj_digits}, headers=headers)
             html = r.text
-            # Tenta POST com CNPJ
-            r2 = await c.post(url, data={"cnpj": cnpj, "numeroCNPJ": cnpj}, headers=headers)
-            html = r2.text
         except Exception:
             html = ""
-
-    result = _parse_certidao_html(html, "cnd_falencia")
-    if result.get("status") == "pendente":
-        result["observacao"] = (
-            f"TJ{uf_upper} consultado. Se não houver dados automáticos, acesse: {url}"
-        )
+    result = _parse_certidao_html(html, "cnd_falencia", page_url=url)
+    if result["status"] == "em_analise":
+        result["observacao"] = (result.get("observacao") or "") + f" Acesse: {url}"
     return result
 
 
