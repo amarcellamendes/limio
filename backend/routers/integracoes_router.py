@@ -315,7 +315,7 @@ async def _executar_consulta_certidao(tipo: str, cnpj: str, uf: str, cliente: Cl
     if tipo == "cnd_federal":
         return await _consultar_cnd_federal(cnpj)
     if tipo == "cnd_fgts":
-        return await _consultar_cnd_fgts(cnpj)
+        return await _consultar_cnd_fgts(cnpj, uf)
     if tipo == "cndt_tst":
         return await _consultar_cndt_tst(cnpj)
     if tipo == "cndt_trt":
@@ -418,7 +418,7 @@ async def _run_playwright_multi(cert_pem: bytes, key_pem: bytes, origins: list[s
             browser = await pw.chromium.launch(
                 headless=True,
                 args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
-                      "--disable-blink-features=AutomationControlled"],
+                      "--disable-blink-features=AutomationControlled", "--no-proxy-server"],
             )
             certs = [{"origin": o, "certPath": cert_path, "keyPath": key_path} for o in origins]
             context = await browser.new_context(
@@ -482,7 +482,7 @@ async def _run_playwright(cert_pem: bytes, key_pem: bytes, origin: str, tarefa_f
             browser = await pw.chromium.launch(
                 headless=True,
                 args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
-                      "--disable-blink-features=AutomationControlled"],
+                      "--disable-blink-features=AutomationControlled", "--no-proxy-server"],
             )
             context = await browser.new_context(
                 client_certificates=[{"origin": origin, "certPath": cert_path, "keyPath": key_path}],
@@ -571,7 +571,7 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
 
     # ── Fluxo via procuração (cert do escritório, e-CAC) ──────────────────────
     if usar_procuracao:
-        # 1. Login via e-CAC com certificado do escritório
+        # 1. Acessa e-CAC — o cert é apresentado automaticamente pelo Playwright
         await page.goto(
             "https://cav.receita.fazenda.gov.br/autenticacao/login",
             wait_until="domcontentloaded", timeout=_PGDAS_TIMEOUT,
@@ -584,17 +584,25 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
                 if await el.count() > 0:
                     await el.click()
                     await page.wait_for_load_state("domcontentloaded", timeout=20000)
-                    await page.wait_for_timeout(2000)
+                    await page.wait_for_timeout(3000)
                     break
             except Exception:
                 pass
 
-        # 2. Alterar perfil de acesso para o cliente (procuração)
+        # 2. Vai para a home do e-CAC (onde fica o botão "Alterar perfil de acesso")
+        current_url = page.url
+        if "ecac" not in current_url.lower() and "cav" not in current_url.lower():
+            await page.goto(
+                "https://cav.receita.fazenda.gov.br/ecac/",
+                wait_until="domcontentloaded", timeout=_PGDAS_TIMEOUT,
+            )
+            await page.wait_for_timeout(3000)
+
+        # 3. Clica em "Alterar perfil de acesso" para acessar como procurador do cliente
         for sel in [
-            f"a:has-text('{cnpj_fmt}')", f"a:has-text('{cnpj_limpo}')",
-            f"td:has-text('{cnpj_limpo[:8]}')", f"tr:has-text('{cnpj_fmt}')",
             "a:has-text('Alterar perfil')", "button:has-text('Alterar perfil')",
             "#lnkAlterarPerfil", "a:has-text('Trocar perfil')",
+            "a:has-text('Acessar como procurador')", "a[href*='alterarPerfil']",
         ]:
             try:
                 el = page.locator(sel).first
@@ -602,30 +610,34 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
                     await el.click()
                     await page.wait_for_load_state("domcontentloaded", timeout=15000)
                     await page.wait_for_timeout(2000)
-                    # Após clicar em "Alterar perfil", busca o CNPJ do cliente na lista
-                    for sel2 in [f"a:has-text('{cnpj_fmt}')", f"a:has-text('{cnpj_limpo[:8]}')",
-                                  f"td:has-text('{cnpj_limpo}')"]:
-                        try:
-                            el2 = page.locator(sel2).first
-                            if await el2.count() > 0:
-                                await el2.click()
-                                await page.wait_for_load_state("domcontentloaded", timeout=15000)
-                                await page.wait_for_timeout(2000)
-                                break
-                        except Exception:
-                            pass
                     break
             except Exception:
                 pass
 
-        # 3. Navega para a página de PGDAS-D no e-CAC (URL exata fornecida pela usuária)
+        # 4. Seleciona o cliente por CNPJ na lista de procurados
+        for sel in [
+            f"a:has-text('{cnpj_fmt}')", f"a:has-text('{cnpj_limpo[:14]}')",
+            f"a:has-text('{cnpj_limpo[:8]}')", f"td:has-text('{cnpj_limpo}')",
+            f"tr:has-text('{cnpj_fmt}') a", f"tr:has-text('{cnpj_limpo[:8]}') a",
+        ]:
+            try:
+                el = page.locator(sel).first
+                if await el.count() > 0:
+                    await el.click()
+                    await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    await page.wait_for_timeout(3000)
+                    break
+            except Exception:
+                pass
+
+        # 5. Navega para a página de PGDAS-D no e-CAC (URL exata que a usuária usa)
         await page.goto(
             "https://cav.receita.fazenda.gov.br/ecac/Aplicacao.aspx?id=10009&origem=menu",
             wait_until="domcontentloaded", timeout=_PGDAS_TIMEOUT,
         )
         await page.wait_for_timeout(4000)
 
-        # 4. Se ainda precisa selecionar o cliente (lista de procurados aparece na página)
+        # 6. Se a página ainda mostra lista de clientes, seleciona o correto
         try:
             el = page.locator(
                 f"a:has-text('{cnpj_fmt}'), a:has-text('{cnpj_limpo[:8]}'), "
@@ -1347,74 +1359,88 @@ async def _consultar_cnd_federal(cnpj: str) -> dict:
         }
 
 
-async def _consultar_cnd_fgts(cnpj: str) -> dict:
+async def _consultar_cnd_fgts(cnpj: str, uf: str = "") -> dict:
     """CRF FGTS — Caixa Econômica Federal.
-    Tenta httpx direto (API REST da Caixa) e, se falhar, abre via Playwright.
+    URL: https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf
+    Preenche CNPJ + UF do empregador e extrai o resultado.
     """
-    import httpx as _httpx
-
     cnpj_digits = re.sub(r'\D', '', cnpj)
+    cnpj_fmt = f"{cnpj_digits[:2]}.{cnpj_digits[2:5]}.{cnpj_digits[5:8]}/{cnpj_digits[8:12]}-{cnpj_digits[12:]}"
+    url_fgts = "https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf"
+    url_manual = "https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf"
 
-    # 1. Tenta API REST pública da Caixa (não requer autenticação para consulta de CRF)
-    _URLS_FGTS = [
-        f"https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf",
-        f"https://crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf",
-        f"https://crf.caixa.gov.br/certidao/?cnpj={cnpj_digits}",
-    ]
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    }
-
-    for url in _URLS_FGTS:
-        try:
-            async with _httpx.AsyncClient(verify=False, timeout=20, follow_redirects=True, headers=headers) as c:
-                r = await c.get(url)
-                if r.status_code == 200 and len(r.text) > 500:
-                    result = _parse_certidao_html(r.text, "cnd_fgts", page_url=str(r.url))
-                    if result["status"] != "em_analise":
-                        return result
-        except Exception:
-            pass
-
-    # 2. Playwright como fallback
     if not await _playwright_ok():
         return {
             "status": "em_analise",
-            "observacao": "CRF FGTS: portal da Caixa fora do ar ou com acesso bloqueado. Acesse manualmente: https://crf.caixa.gov.br"
+            "observacao": f"Playwright não disponível. Acesse manualmente: {url_manual}"
         }
 
-    async def _tarefa(page):
-        for url in _URLS_FGTS:
+    async def _tarefa_fgts(page):
+        await page.goto(url_fgts, wait_until="domcontentloaded", timeout=40_000)
+        await page.wait_for_timeout(3000)
+
+        html = await page.content()
+        if "Azion" in html or len(html) < 500:
+            return {
+                "status": "em_analise",
+                "observacao": f"Portal CRF FGTS bloqueou acesso automático (CDN). Acesse manualmente: {url_manual}"
+            }
+
+        # Preenche CNPJ (pode estar com ou sem máscara)
+        for sel in [
+            'input[id*="cnpj" i]', 'input[name*="cnpj" i]',
+            'input[id*="empregador" i]', 'input[type="text"]:first-of-type',
+        ]:
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-                await page.wait_for_timeout(3000)
-                html = await page.content()
-                if "Azion" not in html and len(html) > 1000:
+                el = page.locator(sel).first
+                if await el.count() > 0:
+                    await el.fill(cnpj_digits)
                     break
             except Exception:
                 pass
-        for sel in ['input[id*="cnpj" i]', 'input[name*="cnpj" i]', 'input[type="text"]']:
+
+        # Seleciona UF se houver dropdown
+        if uf:
+            for sel in [
+                'select[id*="uf" i]', 'select[name*="uf" i]',
+                'select[id*="estado" i]', 'select[name*="estado" i]',
+            ]:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() > 0:
+                        await el.select_option(uf.upper())
+                        break
+                except Exception:
+                    pass
+
+        # Clica em Consultar
+        for sel in [
+            'input[type="submit"]', 'button[type="submit"]',
+            'button:has-text("Consultar")', 'input[value*="Consultar" i]',
+            'a:has-text("Consultar")',
+        ]:
             try:
-                await page.fill(sel, cnpj_digits, timeout=3_000)
-                break
+                el = page.locator(sel).first
+                if await el.count() > 0:
+                    await el.click()
+                    await page.wait_for_load_state("domcontentloaded", timeout=30_000)
+                    await page.wait_for_timeout(3000)
+                    break
             except Exception:
                 pass
-        for sel in ['button[type="submit"]', 'input[type="submit"]', 'input[type="image"]']:
-            try:
-                await page.click(sel, timeout=3_000)
-                break
-            except Exception:
-                pass
-        await page.wait_for_load_state("networkidle", timeout=30_000)
-        return _parse_certidao_html(await page.content(), "cnd_fgts", page_url=page.url)
+
+        html2 = await page.content()
+        result = _parse_certidao_html(html2, "cnd_fgts", page_url=page.url)
+        if result["status"] == "em_analise" and not result.get("observacao"):
+            result["observacao"] = f"Acesse manualmente: {url_manual}"
+        return result
 
     try:
-        return await _run_playwright_no_cert(_tarefa)
+        return await _run_playwright_no_cert(_tarefa_fgts)
     except Exception as e:
         return {
             "status": "em_analise",
-            "observacao": f"Portal CRF FGTS inacessível: {str(e)[:120]}. Acesse: https://crf.caixa.gov.br"
+            "observacao": f"CRF FGTS: {str(e)[:150]}. Acesse: {url_manual}"
         }
 
 
@@ -1560,9 +1586,87 @@ async def _consultar_cnd_estadual(cnpj: str, uf: str, tipo: str) -> dict:
 
 
 async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
-    """CND Municipal — varia por município. Usa Playwright para municípios com portal JS."""
+    """CND Municipal — varia por município."""
+    mun_key = municipio.lower().strip()
+    cnpj_digits = re.sub(r'\D', '', cnpj)
+
+    # ── Manaus / SEMEF ────────────────────────────────────────────────────────
+    if "manaus" in mun_key or uf.upper() == "AM":
+        # Portal: semefatende.manaus.am.gov.br/servicoJanela.php?servico=1412
+        # O STM exige CAPTCHA — tenta via Playwright, mas se CAPTCHA bloquear,
+        # retorna link direto ao portal.
+        url_manual = "https://semefatende.manaus.am.gov.br/servicoJanela.php?servico=1412"
+        stm_url = "https://stm.manaus.am.gov.br/stm/servlet/hwvdocumentos_v3"
+
+        if not await _playwright_ok():
+            return {"status": "em_analise", "observacao": f"Acesse manualmente: {url_manual}"}
+
+        async def _tarefa_manaus(page):
+            # Tenta acesso direto ao servlet STM (pode funcionar sem CAPTCHA via POST)
+            try:
+                await page.goto(url_manual, wait_until="domcontentloaded", timeout=30_000)
+                await page.wait_for_timeout(2000)
+                # Seleciona radio "CNPJ" se existir
+                for sel in ['input[value="CNPJ"]', 'input[type="radio"][value*="cnpj" i]',
+                            'label:has-text("CNPJ") input']:
+                    try:
+                        el = page.locator(sel).first
+                        if await el.count() > 0:
+                            await el.click()
+                            await page.wait_for_timeout(500)
+                            break
+                    except Exception:
+                        pass
+                # Preenche o número do CNPJ
+                for sel in ['input[id*="numero" i]', 'input[name*="numero" i]',
+                            'input[id*="cnpj" i]', 'input[type="text"]']:
+                    try:
+                        el = page.locator(sel).first
+                        if await el.count() > 0:
+                            await el.fill(cnpj_digits)
+                            break
+                    except Exception:
+                        pass
+                # Verifica se tem CAPTCHA — se sim, não consegue prosseguir
+                html_cap = await page.content()
+                if re.search(r'captcha|recaptcha|Recarregar|código de segurança', html_cap, re.I):
+                    return {
+                        "status": "em_analise",
+                        "observacao": (
+                            f"O portal SEMEF Manaus exige CAPTCHA e não pode ser preenchido automaticamente. "
+                            f"Acesse: {url_manual} — selecione CNPJ, informe {cnpj_digits} e preencha o CAPTCHA."
+                        ),
+                    }
+                # Clica em Consultar
+                for sel in ['input[type="submit"]', 'button:has-text("Consultar")',
+                            'input[value*="Consultar" i]']:
+                    try:
+                        el = page.locator(sel).first
+                        if await el.count() > 0:
+                            await el.click()
+                            await page.wait_for_load_state("domcontentloaded", timeout=20_000)
+                            await page.wait_for_timeout(2000)
+                            break
+                    except Exception:
+                        pass
+                html = await page.content()
+                result = _parse_certidao_html(html, "cnd_municipal", page_url=page.url)
+                if result["status"] == "em_analise":
+                    result["observacao"] = (result.get("observacao") or "") + f" Acesse: {url_manual}"
+                return result
+            except Exception as e:
+                return {
+                    "status": "em_analise",
+                    "observacao": f"Erro ao acessar SEMEF: {str(e)[:120]}. Acesse: {url_manual}",
+                }
+
+        try:
+            return await _run_playwright_no_cert(_tarefa_manaus)
+        except Exception as e:
+            return {"status": "em_analise", "observacao": f"Erro: {str(e)[:120]}. Acesse: {url_manual}"}
+
+    # ── Outros municípios ─────────────────────────────────────────────────────
     _PORTAIS = {
-        "manaus": "https://semef.manaus.am.gov.br/certidaonegativa/emissao",
         "são paulo": "https://nfe.prefeitura.sp.gov.br/contribuinte/certidao.aspx",
         "rio de janeiro": "https://mobuss.rio.rj.gov.br/certidao",
         "belo horizonte": "https://bhiss.pbh.gov.br/bhiss/certidao",
@@ -1570,21 +1674,15 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
         "curitiba": "https://www.curitiba.pr.gov.br/servicos/certidao",
         "porto alegre": "https://prefeitura.poa.br/smf/certidao",
     }
-    mun_key = municipio.lower().strip()
     url = _PORTAIS.get(mun_key, "")
     if not url:
         return {
             "status": "em_analise",
-            "observacao": (
-                f"Portal da Prefeitura de {municipio}/{uf} ainda não integrado. "
-                f"Consulte manualmente no site da prefeitura."
-            ),
+            "observacao": f"Portal da Prefeitura de {municipio}/{uf} ainda não integrado. Consulte manualmente no site da prefeitura.",
         }
 
     if not await _playwright_ok():
         return {"status": "em_analise", "observacao": f"Playwright não disponível. Acesse: {url}"}
-
-    cnpj_digits = re.sub(r'\D', '', cnpj)
 
     async def _tarefa(page):
         await page.goto(url, wait_until="networkidle", timeout=40_000)
@@ -1613,8 +1711,18 @@ async def _consultar_cnd_falencia(cnpj: str, uf: str = "AM") -> dict:
     """Certidão de Falência/Recuperação Judicial — emitida pelos Tribunais de Justiça estaduais."""
     import httpx
 
+    # TJAM exige fluxo com verificação por e-mail (não automatizável)
+    if uf.upper() == "AM":
+        return {
+            "status": "em_analise",
+            "observacao": (
+                "A certidão de falência do TJAM exige verificação por e-mail e não pode ser emitida automaticamente. "
+                "Acesse https://consultasaj.tjam.jus.br/sco/abrirCadastro.do, preencha CNPJ, razão social "
+                "e e-mail do escritório para receber o código de acesso à certidão."
+            ),
+        }
+
     _TJ_URLS = {
-        "AM": "https://www.tjam.jus.br/index.php?option=com_content&view=article&id=3038&Itemid=392",
         "SP": "https://esaj.tjsp.jus.br/sco/abrirCadastro.do",
         "RJ": "https://certidaodigital.tjrj.jus.br/certidaodigital/",
         "MG": "https://www4.tjmg.jus.br/juridico/sf/certidao.jsp",
@@ -2015,7 +2123,9 @@ def _parse_certidao_html(html: str, tipo: str, page_url: str = "") -> dict:
     # Extrai data de validade — prioriza padrões específicos e datas futuras
     hoje = date.today()
     data_validade = None
+    data_emissao = None
     candidatas: list[date] = []
+    emissoes: list[date] = []
 
     # Padrões prioritários (contexto de validade)
     for pat in [
@@ -2024,10 +2134,26 @@ def _parse_certidao_html(html: str, tipo: str, page_url: str = "") -> dict:
         r'expira\s+em\s*:?\s*(\d{2}/\d{2}/\d{4})',
         r'prazo\s+de\s+validade\s*:?\s*(\d{2}/\d{2}/\d{4})',
         r'data\s+de\s+validade\s*:?\s*(\d{2}/\d{2}/\d{4})',
+        r'v[aá]lida\s+(?:at[eé]|até)\s+(\d{2}/\d{2}/\d{4})',
+        r'(\d{2}/\d{2}/\d{4})\s*(?:\(validade|\(prazo)',
     ]:
         for m in re.finditer(pat, html, re.IGNORECASE):
             try:
                 candidatas.append(datetime.strptime(m.group(1), "%d/%m/%Y").date())
+            except ValueError:
+                pass
+
+    # Padrões de data de emissão (usados para calcular validade padrão)
+    for pat in [
+        r'emitida\s+em\s*:?\s*(\d{2}/\d{2}/\d{4})',
+        r'emiss[aã]o\s*:?\s*(\d{2}/\d{2}/\d{4})',
+        r'expedida\s+em\s*:?\s*(\d{2}/\d{2}/\d{4})',
+        r'data\s+(?:de\s+)?emiss[aã]o\s*:?\s*(\d{2}/\d{2}/\d{4})',
+        r'gerada\s+em\s*:?\s*(\d{2}/\d{2}/\d{4})',
+    ]:
+        for m in re.finditer(pat, html, re.IGNORECASE):
+            try:
+                emissoes.append(datetime.strptime(m.group(1), "%d/%m/%Y").date())
             except ValueError:
                 pass
 
@@ -2037,6 +2163,19 @@ def _parse_certidao_html(html: str, tipo: str, page_url: str = "") -> dict:
         data_validade = min(futuras)
     elif candidatas:
         data_validade = max(candidatas)
+
+    # Se não achou data de validade explícita mas achou data de emissão,
+    # calcula validade padrão por tipo de certidão (regra legal BR)
+    if not data_validade and emissoes and status == "regular":
+        from datetime import timedelta
+        _VALIDADE_DIAS = {
+            "cnd_federal": 180, "cndt_tst": 180, "cndt_trt": 180,
+            "cnd_fgts": 90, "cnd_estadual": 180, "cnd_estadual_nc": 180,
+            "cnd_municipal": 180, "cnd_falencia": 90,
+        }
+        dias = _VALIDADE_DIAS.get(tipo, 180)
+        data_emissao = max(emissoes)
+        data_validade = data_emissao + timedelta(days=dias)
 
     # Extrai número da certidão — exclui caminhos de arquivo, hashes e referências JS
     _EXTENSOES = ('.js', '.css', '.html', '.htm', '.php', '.asp', '.json', '.png', '.jpg')
