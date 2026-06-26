@@ -8,12 +8,18 @@ import os
 from .database import init_db
 from .routers import auth_router, clientes_router, notas_router, recebidos_router, calendario_router, contratos_router, apuracao_router, usuarios_router, integracoes_router, certidoes_router, fornecedores_router
 from .services.sync_scheduler import start_scheduler, stop_scheduler
+from .proxy_manager import init_proxy_manager
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     start_scheduler()
+    from .config import settings as _cfg
+    init_proxy_manager(
+        api_key=_cfg.WEBSHARE_API_KEY,
+        static_url=_cfg.PROXY_RESIDENCIAL_URL,
+    )
     yield
     stop_scheduler()
 

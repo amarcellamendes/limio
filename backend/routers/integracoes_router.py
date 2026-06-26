@@ -26,6 +26,7 @@ from sqlalchemy import select
 from ..database import get_db
 from ..models import Cliente, Escritorio, ReceitaHistorica, FolhaMensal
 from ..auth import get_escritorio_atual
+from ..proxy_manager import get_proxy_manager
 
 router = APIRouter(prefix="/api/integracoes", tags=["Integrações RF/eSocial"])
 
@@ -65,28 +66,31 @@ async def buscar_pgdas(
 
     try:
         if usar_procuracao:
-            # Abordagem NSS: importa PFX no banco NSS isolado para que o Chromium
-            # apresente o cert na interface JavaScript do GOV.BR SSO (acesso.gov.br)
             pfx_path = getattr(escritorio, "cert_procuracao_path", None)
             pfx_senha = getattr(escritorio, "cert_procuracao_senha", "") or ""
             if pfx_path and os.path.exists(pfx_path):
-                resultado = await _run_playwright_ecac_nss(
-                    pfx_path, pfx_senha,
-                    lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano, usar_procuracao=True),
+                resultado = await _run_ecac_com_proxy(
+                    tarefa_fn=lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano, usar_procuracao=True),
+                    pfx_path=pfx_path,
+                    pfx_senha=pfx_senha,
+                    prefer_brazil=True,
                 )
             else:
-                # Fallback: client_certificates (funciona se o servidor usa TLS mutual auth)
-                resultado = await _run_playwright_multi(
-                    cert_pem, key_pem,
-                    ["https://cav.receita.fazenda.gov.br", "https://acesso.gov.br",
-                     "https://sso.acesso.gov.br"],
-                    lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano, usar_procuracao=True),
+                resultado = await _run_ecac_com_proxy(
+                    tarefa_fn=lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano, usar_procuracao=True),
+                    cert_pem=cert_pem,
+                    key_pem=key_pem,
+                    origins=["https://cav.receita.fazenda.gov.br", "https://acesso.gov.br",
+                             "https://sso.acesso.gov.br"],
+                    prefer_brazil=True,
                 )
         else:
-            resultado = await _run_playwright_multi(
-                cert_pem, key_pem,
-                ["https://cav.receita.fazenda.gov.br", "https://acesso.gov.br"],
-                lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano, usar_procuracao=False),
+            resultado = await _run_ecac_com_proxy(
+                tarefa_fn=lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano, usar_procuracao=False),
+                cert_pem=cert_pem,
+                key_pem=key_pem,
+                origins=["https://cav.receita.fazenda.gov.br", "https://acesso.gov.br"],
+                prefer_brazil=True,
             )
         for rec in resultado.get("receitas", []):
             await _upsert_receita(db, escritorio.id, cliente.id, rec["competencia"], rec["valor_receita"], "pgdas_d")
@@ -125,18 +129,20 @@ async def buscar_esocial(
         cert_pem, key_pem = await _cert_ou_erro(cliente, senha)
 
     try:
-        # Resolve empregador.esocial.gov.br via DoH (DNS do Railway não resolve esse subdomínio)
         esocial_ip = await _resolver_doh("empregador.esocial.gov.br")
         extra_args: list[str] = []
         if esocial_ip:
             extra_args.append(f"--host-resolver-rules=MAP empregador.esocial.gov.br {esocial_ip}")
 
-        resultado = await _run_playwright_multi(
-            cert_pem, key_pem,
-            ["https://empregador.esocial.gov.br", "https://www.esocial.gov.br",
-             "https://login.esocial.gov.br", "https://acesso.gov.br", "https://sso.acesso.gov.br"],
-            lambda p, c: _tarefa_esocial(p, c, cliente.cnpj, ano, usar_procuracao),
+        resultado = await _run_ecac_com_proxy(
+            tarefa_fn=lambda p, c: _tarefa_esocial(p, c, cliente.cnpj, ano, usar_procuracao),
+            cert_pem=cert_pem,
+            key_pem=key_pem,
+            origins=["https://empregador.esocial.gov.br", "https://www.esocial.gov.br",
+                     "https://login.esocial.gov.br", "https://acesso.gov.br",
+                     "https://sso.acesso.gov.br"],
             extra_chromium_args=extra_args,
+            prefer_brazil=True,
         )
         for f in resultado.get("folhas", []):
             await _upsert_folha(db, escritorio.id, cliente.id, f["competencia"], f["valor_total_folha"])
@@ -277,6 +283,26 @@ async def diagnostico_rede():
         except Exception as e:
             resultados["urls"][url] = {"ok": False, "erro": str(e)[:300]}
     return resultados
+
+
+@router.get("/proxy-stats")
+async def proxy_stats(
+    escritorio: Escritorio = Depends(get_escritorio_atual),
+):
+    """Métricas do pool de proxies: latência, falhas, cooling-off.
+    Credenciais (usuário/senha) são ocultadas — exibe apenas host:porta.
+    """
+    manager = get_proxy_manager()
+    if not manager:
+        return {"status": "não inicializado", "proxies": []}
+    stats = manager.stats()
+    return {
+        "status": "ok",
+        "total": len(stats),
+        "disponiveis": sum(1 for p in stats if p["available"]),
+        "em_cooling": sum(1 for p in stats if p["cooling"]),
+        "proxies": stats,
+    }
 
 
 @router.post("/certidao-preview")
@@ -692,9 +718,11 @@ async def _run_playwright_multi(
     origins: list[str],
     tarefa_fn,
     extra_chromium_args: list[str] | None = None,
+    proxy_url: str | None = None,
 ) -> dict:
-    """Igual a _run_playwright mas registra o certificado em múltiplas origens.
-    extra_chromium_args: flags adicionais passadas ao Chromium (ex: --host-resolver-rules).
+    """Lança Playwright com client certificate em múltiplas origens.
+    proxy_url: http://user:pass@host:port — roteia pelo proxy quando fornecido.
+    extra_chromium_args: flags adicionais (ex: --host-resolver-rules).
     """
     from playwright.async_api import async_playwright
 
@@ -704,19 +732,25 @@ async def _run_playwright_multi(
         kf.write(key_pem); key_path = kf.name
 
     try:
-        args = list(_CHROMIUM_ARGS) + (extra_chromium_args or [])
+        base_args = _CHROMIUM_ARGS_SEM_PROXY_FLAG if proxy_url else _CHROMIUM_ARGS
+        args = list(base_args) + (extra_chromium_args or [])
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(
                 headless=True,
                 args=args,
                 env=_env_sem_proxy(),
             )
-            certs = [{"origin": o, "certPath": cert_path, "keyPath": key_path} for o in origins]
-            context = await browser.new_context(
-                client_certificates=certs,
+            ctx_kwargs: dict = dict(
+                client_certificates=[
+                    {"origin": o, "certPath": cert_path, "keyPath": key_path}
+                    for o in origins
+                ],
                 ignore_https_errors=True,
                 user_agent=_UA,
             )
+            if proxy_url:
+                ctx_kwargs["proxy"] = {"server": proxy_url}
+            context = await browser.new_context(**ctx_kwargs)
             page = await context.new_page()
             try:
                 return await tarefa_fn(page, context)
@@ -765,11 +799,14 @@ async def _importar_cert_pfx_nss_em(pfx_path: str, senha: str, tmp_home: str) ->
     return True, ""
 
 
-async def _run_playwright_ecac_nss(pfx_path: str, pfx_senha: str, tarefa_fn) -> dict:
+async def _run_playwright_ecac_nss(
+    pfx_path: str,
+    pfx_senha: str,
+    tarefa_fn,
+    proxy_url: str | None = None,
+) -> dict:
     """Lança Playwright com certificado importado no NSS isolado por sessão.
-    Isso permite que o Chromium use o cert no seletor JavaScript do GOV.BR SSO
-    (acesso.gov.br/selecionar-certificado) — diferente do TLS client_certificates
-    que só funciona para TLS mutual auth de rede.
+    proxy_url: quando fornecido, roteia a sessão pelo proxy residencial.
     Requer libnss3-tools (certutil + pk12util) na imagem.
     """
     import shutil
@@ -784,13 +821,15 @@ async def _run_playwright_ecac_nss(pfx_path: str, pfx_senha: str, tarefa_fn) -> 
                 "Verifique se libnss3-tools está instalado na imagem do Railway."
             )
 
-        # Chromium usa $HOME/.pki/nssdb — setamos HOME para o diretório isolado
         env = _env_sem_proxy()
         env["HOME"] = tmp_home
 
-        # SEM --no-proxy-server e SEM --proxy-bypass-list para não interferir
-        # com o fluxo de certificado PKCS#11 via NSS
-        args = [a for a in _CHROMIUM_ARGS if "proxy" not in a.lower()]
+        # Com proxy: usa _CHROMIUM_ARGS_SEM_PROXY_FLAG (sem --no-proxy-server)
+        # Sem proxy: remove flags de proxy para não conflitar com NSS
+        if proxy_url:
+            args = list(_CHROMIUM_ARGS_SEM_PROXY_FLAG)
+        else:
+            args = [a for a in _CHROMIUM_ARGS if "proxy" not in a.lower()]
 
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(
@@ -798,10 +837,13 @@ async def _run_playwright_ecac_nss(pfx_path: str, pfx_senha: str, tarefa_fn) -> 
                 args=args,
                 env=env,
             )
-            context = await browser.new_context(
+            ctx_kwargs: dict = dict(
                 ignore_https_errors=True,
                 user_agent=_UA,
             )
+            if proxy_url:
+                ctx_kwargs["proxy"] = {"server": proxy_url}
+            context = await browser.new_context(**ctx_kwargs)
             page = await context.new_page()
             try:
                 return await tarefa_fn(page, context)
@@ -810,6 +852,69 @@ async def _run_playwright_ecac_nss(pfx_path: str, pfx_senha: str, tarefa_fn) -> 
                 await browser.close()
     finally:
         shutil.rmtree(tmp_home, ignore_errors=True)
+
+
+async def _run_ecac_com_proxy(
+    *,
+    tarefa_fn,
+    pfx_path: str | None = None,
+    pfx_senha: str | None = None,
+    cert_pem: bytes | None = None,
+    key_pem: bytes | None = None,
+    origins: list[str] | None = None,
+    extra_chromium_args: list[str] | None = None,
+    prefer_brazil: bool = True,
+    max_tentativas: int = 3,
+) -> dict:
+    """Executa tarefa e-CAC/eSocial roteando pelo ProxyManager com retry automático.
+    Em caso de falha de rede, marca o proxy como falho e tenta o próximo.
+    Se ProxyManager não estiver configurado, executa sem proxy (comportamento anterior).
+    """
+    import time as _time
+
+    manager = get_proxy_manager()
+    proxies_tentados: set[str] = set()
+
+    for tentativa in range(max_tentativas):
+        proxy_url: str | None = None
+        if manager:
+            proxy_url = await manager.get_proxy(prefer_brazil=prefer_brazil)
+            if proxy_url in proxies_tentados:
+                proxy_url = None
+            if proxy_url:
+                proxies_tentados.add(proxy_url)
+
+        t0 = _time.monotonic()
+        try:
+            if pfx_path and pfx_senha is not None:
+                resultado = await _run_playwright_ecac_nss(
+                    pfx_path, pfx_senha, tarefa_fn, proxy_url=proxy_url,
+                )
+            else:
+                resultado = await _run_playwright_multi(
+                    cert_pem, key_pem,
+                    origins or [],
+                    tarefa_fn,
+                    extra_chromium_args=extra_chromium_args,
+                    proxy_url=proxy_url,
+                )
+            elapsed_ms = (_time.monotonic() - t0) * 1000
+            if proxy_url and manager:
+                manager.record_success(proxy_url, elapsed_ms)
+            return resultado
+
+        except Exception as e:
+            if proxy_url and manager:
+                manager.record_failure(proxy_url)
+            is_last = tentativa == max_tentativas - 1
+            if is_last:
+                raise
+            # Só retenta com proxy diferente em erros de rede/proxy
+            err_str = str(e).lower()
+            if not any(k in err_str for k in ("net::", "connection", "proxy", "timeout", "socks")):
+                raise
+
+    raise RuntimeError("Todas as tentativas de proxy falharam")
 
 
 async def _run_playwright_no_cert(tarefa_fn) -> dict:
@@ -1898,30 +2003,50 @@ async def _consultar_cnd_fgts(cnpj: str, uf: str = "") -> dict:
         return result
 
     try:
-        from ..config import settings as _cfg_fgts
-        proxy_url = _cfg_fgts.PROXY_RESIDENCIAL_URL
-        if proxy_url:
-            # Usa proxy residencial para contornar bloqueio Azion CDN
-            from playwright.async_api import async_playwright
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(
-                    headless=True,
-                    args=_CHROMIUM_ARGS_SEM_PROXY_FLAG,
-                    env=_env_sem_proxy(),
-                )
-                context = await browser.new_context(
-                    proxy={"server": proxy_url},
-                    ignore_https_errors=True,
-                    user_agent=_UA,
-                )
-                page = await context.new_page()
-                try:
-                    return await _tarefa_fgts(page)
-                finally:
-                    await context.close()
-                    await browser.close()
-        else:
-            return await _run_playwright_no_cert(_tarefa_fgts)
+        import time as _t_fgts
+        manager = get_proxy_manager()
+        proxy_url: str | None = None
+        if manager:
+            proxy_url = await manager.get_proxy(prefer_brazil=True)
+        # Fallback: PROXY_RESIDENCIAL_URL estático se ProxyManager não carregou
+        if not proxy_url:
+            from ..config import settings as _cfg_fgts
+            proxy_url = _cfg_fgts.PROXY_RESIDENCIAL_URL or None
+
+        t0_fgts = _t_fgts.monotonic()
+        try:
+            if proxy_url:
+                from playwright.async_api import async_playwright as _apw_fgts
+                async with _apw_fgts() as pw:
+                    browser = await pw.chromium.launch(
+                        headless=True,
+                        args=_CHROMIUM_ARGS_SEM_PROXY_FLAG,
+                        env=_env_sem_proxy(),
+                    )
+                    context = await browser.new_context(
+                        proxy={"server": proxy_url},
+                        ignore_https_errors=True,
+                        user_agent=_UA,
+                    )
+                    page = await context.new_page()
+                    try:
+                        resultado_fgts = await _tarefa_fgts(page)
+                    finally:
+                        await context.close()
+                        await browser.close()
+            else:
+                resultado_fgts = await _run_playwright_no_cert(_tarefa_fgts)
+
+            elapsed_fgts = (_t_fgts.monotonic() - t0_fgts) * 1000
+            if proxy_url and manager:
+                manager.record_success(proxy_url, elapsed_fgts)
+            return resultado_fgts
+
+        except Exception:
+            if proxy_url and manager:
+                manager.record_failure(proxy_url)
+            raise
+
     except Exception as e:
         return {
             "status": "em_analise",

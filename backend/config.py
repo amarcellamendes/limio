@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     # Configure em Railway → Variables: PROXY_RESIDENCIAL_URL=http://user:pass@host:port
     PROXY_RESIDENCIAL_URL: str = ""
 
+    # Webshare.io — pool de proxies residenciais com rotação automática
+    # Configure em Railway → Variables: WEBSHARE_API_KEY=sua_chave
+    WEBSHARE_API_KEY: str = ""
+
     class Config:
         env_file = ".env"
 
