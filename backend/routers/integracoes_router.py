@@ -503,9 +503,9 @@ async def _playwright_ok() -> bool:
 
 async def _resolver_recaptcha_2captcha(page_url: str, site_key: str) -> str | None:
     """Resolve reCAPTCHA v2 via 2captcha.com. Retorna token ou None."""
-    import httpx as _hx
+    import os, httpx as _hx
     from ..config import settings as _cfg
-    api_key = _cfg.DOIS_CAPTCHA_KEY
+    api_key = os.environ.get("DOIS_CAPTCHA_KEY") or _cfg.DOIS_CAPTCHA_KEY
     if not api_key:
         return None
     try:
@@ -541,9 +541,9 @@ async def _resolver_recaptcha_2captcha(page_url: str, site_key: str) -> str | No
 
 async def _resolver_captcha_imagem_2captcha(img_bytes: bytes) -> str | None:
     """Resolve CAPTCHA de imagem via 2captcha.com. Retorna texto ou None."""
-    import base64, httpx as _hx
+    import os, base64, httpx as _hx
     from ..config import settings as _cfg
-    api_key = _cfg.DOIS_CAPTCHA_KEY
+    api_key = os.environ.get("DOIS_CAPTCHA_KEY") or _cfg.DOIS_CAPTCHA_KEY
     if not api_key:
         return None
     try:
@@ -2247,9 +2247,10 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
                             break
                     except Exception:
                         pass
-                # Verifica se tem CAPTCHA — tenta resolver antes de desistir
+                # Aguarda carregamento dinâmico do CAPTCHA
+                await page.wait_for_timeout(2500)
                 html_cap = await page.content()
-                if re.search(r'captcha|recaptcha|Recarregar|código de segurança', html_cap, re.I):
+                if re.search(r'captcha|recaptcha|Recarregar|código de segurança|imgseg|gera_captcha|codigo_seguranca', html_cap, re.I):
                     captcha_resolvido = False
 
                     # Tenta reCAPTCHA v2 via 2captcha
@@ -2263,10 +2264,13 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
                                 """)
                                 captcha_resolvido = True
 
-                    # Tenta CAPTCHA de imagem via 2captcha
+                    # Tenta CAPTCHA de imagem via 2captcha (seletores ampliados para portais PHP gov)
                     if not captcha_resolvido:
                         img_sel = page.locator(
-                            'img[src*="captcha" i], img[id*="captcha" i], img[class*="captcha" i]'
+                            'img[src*="captcha" i], img[id*="captcha" i], img[class*="captcha" i],'
+                            'img[src*="gera_captcha" i], img[src*="codigo" i], img[src*="segur" i],'
+                            'img[src*="imgseg" i], img[src*="verificacao" i], img[src*="verify" i],'
+                            'img[src*="imagem" i][src*=".php"], img[src*="captcha.php"]'
                         ).first
                         if await img_sel.count() > 0:
                             try:
@@ -2276,6 +2280,8 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
                                     for csel in [
                                         'input[id*="captcha" i]', 'input[name*="captcha" i]',
                                         'input[placeholder*="captcha" i]', 'input[placeholder*="ódigo" i]',
+                                        'input[name*="codigo" i]', 'input[name*="segur" i]',
+                                        'input[id*="codigo" i]', 'input[id*="segur" i]',
                                     ]:
                                         el = page.locator(csel).first
                                         if await el.count() > 0:
@@ -2286,11 +2292,13 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
                                 pass
 
                     if not captcha_resolvido:
+                        import os as _os
                         from ..config import settings as _cfg3
+                        _key = _os.environ.get("DOIS_CAPTCHA_KEY") or _cfg3.DOIS_CAPTCHA_KEY
                         dica = (
                             "Configure DOIS_CAPTCHA_KEY no Railway para resolver automaticamente."
-                            if not _cfg3.DOIS_CAPTCHA_KEY else
-                            "2captcha acionado mas não resolveu. Tente novamente."
+                            if not _key else
+                            "2captcha acionado mas não resolveu o CAPTCHA do SEMEF. Tente novamente."
                         )
                         return {
                             "status": "em_analise",
