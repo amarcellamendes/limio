@@ -225,6 +225,34 @@ async def buscar_lote(
 
 # ─── Certidões automáticas ────────────────────────────────────────────────────
 
+@router.get("/diagnostico-rede")
+async def diagnostico_rede(escritorio: Escritorio = Depends(get_escritorio_atual)):
+    """Testa conectividade com portais do governo via httpx (sem Playwright).
+    Retorna status HTTP ou erro por URL — útil para diagnosticar bloqueios de rede.
+    """
+    import httpx as _hx
+    urls = [
+        "https://cav.receita.fazenda.gov.br/autenticacao/login",
+        "https://empregador.esocial.gov.br/",
+        "https://www.esocial.gov.br/",
+        "https://www.tst.jus.br/certidao",
+        "https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf",
+        "https://www.sefaz.am.gov.br/portal/certidao-negativa",
+    ]
+    proxy_vars = {k: v for k, v in os.environ.items() if "proxy" in k.lower()}
+    resultados: dict = {"proxy_vars": proxy_vars, "urls": {}}
+    for url in urls:
+        try:
+            async with _hx.AsyncClient(verify=False, timeout=12, follow_redirects=True) as c:
+                r = await c.get(url, headers={"User-Agent": "Mozilla/5.0 Chrome/125.0.0.0"})
+                resultados["urls"][url] = {
+                    "ok": True, "status": r.status_code, "bytes": len(r.content),
+                }
+        except Exception as e:
+            resultados["urls"][url] = {"ok": False, "erro": str(e)[:300]}
+    return resultados
+
+
 @router.post("/certidao-preview")
 async def preview_certidao(
     payload: dict,
