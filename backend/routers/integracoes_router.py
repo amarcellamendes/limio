@@ -64,18 +64,30 @@ async def buscar_pgdas(
         cert_pem, key_pem = await _cert_ou_erro(cliente, senha)
 
     try:
-        # Inclui GOV.BR SSO — o e-CAC redireciona para acesso.gov.br para autenticação por cert
-        resultado = await _run_playwright_multi(
-            cert_pem, key_pem,
-            [
-                "https://cav.receita.fazenda.gov.br",
-                "https://www8.receita.fazenda.gov.br",
-                "https://acesso.gov.br",
-                "https://sso.acesso.gov.br",
-                "https://idg.receita.fazenda.gov.br",
-            ],
-            lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano, usar_procuracao),
-        )
+        if usar_procuracao:
+            # Abordagem NSS: importa PFX no banco NSS isolado para que o Chromium
+            # apresente o cert na interface JavaScript do GOV.BR SSO (acesso.gov.br)
+            pfx_path = getattr(escritorio, "cert_procuracao_path", None)
+            pfx_senha = getattr(escritorio, "cert_procuracao_senha", "") or ""
+            if pfx_path and os.path.exists(pfx_path):
+                resultado = await _run_playwright_ecac_nss(
+                    pfx_path, pfx_senha,
+                    lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano, usar_procuracao=True),
+                )
+            else:
+                # Fallback: client_certificates (funciona se o servidor usa TLS mutual auth)
+                resultado = await _run_playwright_multi(
+                    cert_pem, key_pem,
+                    ["https://cav.receita.fazenda.gov.br", "https://acesso.gov.br",
+                     "https://sso.acesso.gov.br"],
+                    lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano, usar_procuracao=True),
+                )
+        else:
+            resultado = await _run_playwright_multi(
+                cert_pem, key_pem,
+                ["https://cav.receita.fazenda.gov.br", "https://acesso.gov.br"],
+                lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano, usar_procuracao=False),
+            )
         for rec in resultado.get("receitas", []):
             await _upsert_receita(db, escritorio.id, cliente.id, rec["competencia"], rec["valor_receita"], "pgdas_d")
         await db.commit()
@@ -113,13 +125,18 @@ async def buscar_esocial(
         cert_pem, key_pem = await _cert_ou_erro(cliente, senha)
 
     try:
-        # empregador.esocial.gov.br não resolve DNS no Railway — usar www.esocial.gov.br
+        # Resolve empregador.esocial.gov.br via DoH (DNS do Railway não resolve esse subdomínio)
+        esocial_ip = await _resolver_doh("empregador.esocial.gov.br")
+        extra_args: list[str] = []
+        if esocial_ip:
+            extra_args.append(f"--host-resolver-rules=MAP empregador.esocial.gov.br {esocial_ip}")
+
         resultado = await _run_playwright_multi(
             cert_pem, key_pem,
-            ["https://www.esocial.gov.br", "https://login.esocial.gov.br",
-             "https://cav.receita.fazenda.gov.br",
-             "https://acesso.gov.br", "https://sso.acesso.gov.br"],
+            ["https://empregador.esocial.gov.br", "https://www.esocial.gov.br",
+             "https://login.esocial.gov.br", "https://acesso.gov.br", "https://sso.acesso.gov.br"],
             lambda p, c: _tarefa_esocial(p, c, cliente.cnpj, ano, usar_procuracao),
+            extra_chromium_args=extra_args,
         )
         for f in resultado.get("folhas", []):
             await _upsert_folha(db, escritorio.id, cliente.id, f["competencia"], f["valor_total_folha"])
@@ -565,9 +582,102 @@ def _env_sem_proxy() -> dict:
 _CHROMIUM_ARGS = [
     "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
     "--disable-blink-features=AutomationControlled",
-    "--no-proxy-server",          # ignora proxy de env vars
-    "--proxy-bypass-list=*",      # bypass para todos os hosts
+    "--no-proxy-server",
+    "--proxy-bypass-list=*",
 ]
+
+_CHROMIUM_ARGS_SEM_PROXY_FLAG = [
+    # Versão SEM --no-proxy-server — usada quando queremos passar proxy explícito
+    "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+    "--disable-blink-features=AutomationControlled",
+]
+
+
+# ── DNS over HTTPS (DoH) — contorna resolução falha do Railway ───────────────
+
+async def _resolver_doh(hostname: str) -> str | None:
+    """Resolve hostname via Cloudflare DoH. Retorna primeiro IP A ou None."""
+    import httpx as _hx
+    try:
+        async with _hx.AsyncClient(timeout=8) as c:
+            r = await c.get(
+                f"https://cloudflare-dns.com/dns-query?name={hostname}&type=A",
+                headers={"Accept": "application/dns-json"},
+            )
+            for ans in r.json().get("Answer", []):
+                if ans.get("type") == 1:
+                    return ans["data"]
+    except Exception:
+        pass
+    return None
+
+
+# ── NSS Database — importa cert para que Chromium use no seletor GOV.BR ──────
+
+async def _importar_cert_pfx_nss(pfx_bytes: bytes, senha: str) -> tuple[bool, str]:
+    """
+    Importa certificado PFX no banco NSS do Chromium (~/.pki/nssdb).
+    Retorna (sucesso, nickname) para remoção posterior.
+    Requer libnss3-tools (pk12util, certutil) — incluído na imagem Playwright.
+    """
+    import subprocess, tempfile as _tf
+    nss_dir = os.path.expanduser("~/.pki/nssdb")
+    os.makedirs(nss_dir, exist_ok=True)
+
+    # Inicializa o banco NSS se vazio
+    certutil_path = "/usr/bin/certutil"
+    pk12util_path = "/usr/bin/pk12util"
+    db_arg = f"sql:{nss_dir}"
+
+    # Cria banco se não existir
+    if not os.path.exists(os.path.join(nss_dir, "cert9.db")):
+        subprocess.run(
+            [certutil_path, "-N", "--empty-password", "-d", db_arg],
+            capture_output=True, timeout=10,
+        )
+
+    # Salva PFX em arquivo temporário
+    with _tf.NamedTemporaryFile(suffix=".pfx", delete=False) as f:
+        f.write(pfx_bytes)
+        pfx_tmp = f.name
+
+    try:
+        r = subprocess.run(
+            [pk12util_path, "-i", pfx_tmp, "-d", db_arg, "-W", senha or ""],
+            capture_output=True, timeout=15,
+        )
+        if r.returncode != 0:
+            return False, ""
+
+        # Descobre o nickname importado
+        r2 = subprocess.run(
+            [certutil_path, "-L", "-d", db_arg],
+            capture_output=True, timeout=10, text=True,
+        )
+        # Primeira linha que não é cabeçalho
+        for line in r2.stdout.splitlines():
+            if line.strip() and not line.startswith("Certificate") and not line.startswith("-"):
+                nickname = line.split("  ")[0].strip()
+                if nickname:
+                    return True, nickname
+        return True, ""
+    finally:
+        try:
+            os.unlink(pfx_tmp)
+        except Exception:
+            pass
+
+
+def _remover_cert_nss(nickname: str) -> None:
+    """Remove certificado do banco NSS pelo nickname."""
+    import subprocess
+    if not nickname:
+        return
+    nss_dir = os.path.expanduser("~/.pki/nssdb")
+    subprocess.run(
+        ["/usr/bin/certutil", "-D", "-d", f"sql:{nss_dir}", "-n", nickname],
+        capture_output=True, timeout=10,
+    )
 
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -576,8 +686,16 @@ _UA = (
 )
 
 
-async def _run_playwright_multi(cert_pem: bytes, key_pem: bytes, origins: list[str], tarefa_fn) -> dict:
-    """Igual a _run_playwright mas registra o certificado em múltiplas origens."""
+async def _run_playwright_multi(
+    cert_pem: bytes,
+    key_pem: bytes,
+    origins: list[str],
+    tarefa_fn,
+    extra_chromium_args: list[str] | None = None,
+) -> dict:
+    """Igual a _run_playwright mas registra o certificado em múltiplas origens.
+    extra_chromium_args: flags adicionais passadas ao Chromium (ex: --host-resolver-rules).
+    """
     from playwright.async_api import async_playwright
 
     with tempfile.NamedTemporaryFile(suffix=".pem", delete=False, mode="wb") as cf:
@@ -586,10 +704,11 @@ async def _run_playwright_multi(cert_pem: bytes, key_pem: bytes, origins: list[s
         kf.write(key_pem); key_path = kf.name
 
     try:
+        args = list(_CHROMIUM_ARGS) + (extra_chromium_args or [])
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(
                 headless=True,
-                args=_CHROMIUM_ARGS,
+                args=args,
                 env=_env_sem_proxy(),
             )
             certs = [{"origin": o, "certPath": cert_path, "keyPath": key_path} for o in origins]
@@ -610,6 +729,87 @@ async def _run_playwright_multi(cert_pem: bytes, key_pem: bytes, origins: list[s
                 os.unlink(p)
             except Exception:
                 pass
+
+
+async def _importar_cert_pfx_nss_em(pfx_path: str, senha: str, tmp_home: str) -> tuple[bool, str]:
+    """Importa PFX num banco NSS isolado em tmp_home/.pki/nssdb.
+    Retorna (sucesso, nickname). Requer libnss3-tools na imagem.
+    """
+    import subprocess
+    nss_dir = os.path.join(tmp_home, ".pki", "nssdb")
+    os.makedirs(nss_dir, exist_ok=True)
+    certutil = "/usr/bin/certutil"
+    pk12util  = "/usr/bin/pk12util"
+    db_arg = f"sql:{nss_dir}"
+
+    # Inicializa banco vazio
+    subprocess.run([certutil, "-N", "--empty-password", "-d", db_arg],
+                   capture_output=True, timeout=10)
+
+    # Importa PFX
+    r = subprocess.run(
+        [pk12util, "-i", pfx_path, "-d", db_arg, "-W", senha or ""],
+        capture_output=True, timeout=20,
+    )
+    if r.returncode != 0:
+        return False, ""
+
+    # Descobre nickname importado
+    r2 = subprocess.run([certutil, "-L", "-d", db_arg],
+                        capture_output=True, timeout=10, text=True)
+    for line in r2.stdout.splitlines():
+        if line.strip() and not line.startswith(("Certificate", "-")):
+            nick = line.split("  ")[0].strip()
+            if nick:
+                return True, nick
+    return True, ""
+
+
+async def _run_playwright_ecac_nss(pfx_path: str, pfx_senha: str, tarefa_fn) -> dict:
+    """Lança Playwright com certificado importado no NSS isolado por sessão.
+    Isso permite que o Chromium use o cert no seletor JavaScript do GOV.BR SSO
+    (acesso.gov.br/selecionar-certificado) — diferente do TLS client_certificates
+    que só funciona para TLS mutual auth de rede.
+    Requer libnss3-tools (certutil + pk12util) na imagem.
+    """
+    import shutil
+    from playwright.async_api import async_playwright
+
+    tmp_home = tempfile.mkdtemp(prefix="ecac_nss_")
+    try:
+        ok, _ = await _importar_cert_pfx_nss_em(pfx_path, pfx_senha, tmp_home)
+        if not ok:
+            raise RuntimeError(
+                "Falha ao importar certificado no banco NSS. "
+                "Verifique se libnss3-tools está instalado na imagem do Railway."
+            )
+
+        # Chromium usa $HOME/.pki/nssdb — setamos HOME para o diretório isolado
+        env = _env_sem_proxy()
+        env["HOME"] = tmp_home
+
+        # SEM --no-proxy-server e SEM --proxy-bypass-list para não interferir
+        # com o fluxo de certificado PKCS#11 via NSS
+        args = [a for a in _CHROMIUM_ARGS if "proxy" not in a.lower()]
+
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(
+                headless=True,
+                args=args,
+                env=env,
+            )
+            context = await browser.new_context(
+                ignore_https_errors=True,
+                user_agent=_UA,
+            )
+            page = await context.new_page()
+            try:
+                return await tarefa_fn(page, context)
+            finally:
+                await context.close()
+                await browser.close()
+    finally:
+        shutil.rmtree(tmp_home, ignore_errors=True)
 
 
 async def _run_playwright_no_cert(tarefa_fn) -> dict:
@@ -738,7 +938,8 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
         )
         await page.wait_for_timeout(3000)
         for sel in ["a:has-text('Certificado Digital')", "button:has-text('Certificado Digital')",
-                    "input[value*='ertificado']", "#btnCertificado"]:
+                    "input[value*='ertificado']", "#btnCertificado",
+                    "a:has-text('certificado')", "button:has-text('certificado')"]:
             try:
                 el = page.locator(sel).first
                 if await el.count() > 0:
@@ -749,14 +950,64 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
             except Exception:
                 pass
 
-        # 2. Vai para a home do e-CAC (onde fica o botão "Alterar perfil de acesso")
-        # Sempre navega para /ecac/ — o login apenas apresenta o cert mas não redireciona lá
+        # 2. Aguarda e trata o seletor de certificado do GOV.BR (acesso.gov.br/selecionar-certificado)
+        # O NSS garante que o cert aparece na lista; aqui clicamos nele.
+        for _tentativa in range(15):  # até 45 segundos
+            url_atual = page.url
+            titulo_atual = await page.title()
+
+            # Se chegou no seletor GOV.BR → seleciona o certificado
+            if "acesso.gov.br" in url_atual or "selecionar-certificado" in url_atual:
+                await page.wait_for_timeout(2000)
+                # Tenta clicar no primeiro certificado disponível na lista
+                for sel in [
+                    "ul.certificate-list li:first-child button",
+                    ".certificate-item:first-child button",
+                    ".cert-item:first-child",
+                    "li.certificate:first-child a",
+                    "button.cert-select", "a.cert-select",
+                    "input[type='radio']:first-of-type",
+                    ".certlist li:first-child button",
+                    "div[class*='certificate'] button",
+                ]:
+                    try:
+                        el = page.locator(sel).first
+                        if await el.count() > 0:
+                            await el.click()
+                            await page.wait_for_timeout(1500)
+                            break
+                    except Exception:
+                        pass
+                # Confirma a seleção (botão Entrar / Selecionar / Confirmar)
+                for sel in [
+                    "button:has-text('Entrar')", "button:has-text('Selecionar')",
+                    "button:has-text('Confirmar')", "button.btn-primary",
+                    "input[type='submit']", "button[type='submit']",
+                ]:
+                    try:
+                        el = page.locator(sel).first
+                        if await el.count() > 0:
+                            await el.click()
+                            await page.wait_for_load_state("domcontentloaded", timeout=30000)
+                            await page.wait_for_timeout(3000)
+                            break
+                    except Exception:
+                        pass
+                break  # sai do loop de tentativas — continua o fluxo
+
+            # Se já está no e-CAC autenticado → segue
+            if "cav.receita.fazenda.gov.br/ecac" in url_atual and "autenticacao" not in url_atual:
+                break
+
+            # Se ficou na página de login → aguarda mais (pode estar processando)
+            await page.wait_for_timeout(3000)
+
+        # 3. Navega explicitamente para /ecac/ e verifica se autenticou
         await page.goto(
             "https://cav.receita.fazenda.gov.br/ecac/",
             wait_until="domcontentloaded", timeout=_PGDAS_TIMEOUT,
         )
         await page.wait_for_timeout(3000)
-        # Verifica se autenticou — se voltou para login, cert não foi aceito
         url_apos_ecac = page.url
         if "autenticacao" in url_apos_ecac.lower() or "login" in url_apos_ecac.lower():
             titulo_pg = await page.title()
@@ -764,10 +1015,12 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
                 "receitas": [],
                 "aviso": (
                     f"Autenticação com certificado falhou no e-CAC. "
-                    f"URL após /ecac/: {url_apos_ecac} | Título: {titulo_pg}. "
-                    f"Verifique se o certificado (.pfx) da Mendes e Lima foi aceito pelo GOV.BR. "
-                    f"O e-CAC pode estar redirecionando o login de certificado para acesso.gov.br "
-                    f"— tente renovar o certificado em Configurações."
+                    f"URL: {url_apos_ecac} | Título: {titulo_pg}. "
+                    f"Verifique: (1) certificado .pfx válido e senha correta; "
+                    f"(2) procuração eletrônica ativa no e-CAC para o escritório; "
+                    f"(3) certificado não expirado. "
+                    f"Se o GOV.BR mostrou tela de seleção de cert, pode ser que o "
+                    f"libnss3-tools não está instalado na imagem Railway."
                 ),
             }
 
@@ -984,14 +1237,24 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
     mes_ant = _hoje.month - 1 if _hoje.month > 1 else 12
     ano_ant = _hoje.year if _hoje.month > 1 else _hoje.year - 1
 
-    # ── Login (mesmo passo para os dois fluxos) ───────────────────────────────
-    # empregador.esocial.gov.br não resolve DNS no Railway — portal principal em www
+    # ── Login ─────────────────────────────────────────────────────────────────
+    # empregador.esocial.gov.br: DNS do Railway não resolve, mas o buscar_esocial
+    # passa --host-resolver-rules com IP resolvido via DoH (Cloudflare).
+    # Se o IP não foi resolvido, cai para www como fallback.
     await page.goto(
-        "https://www.esocial.gov.br/portal/",
+        "https://empregador.esocial.gov.br/",
         wait_until="domcontentloaded", timeout=_ESOCIAL_TIMEOUT,
     )
     await page.wait_for_timeout(4000)
-    # Tenta navegar para a área do empregador via www
+
+    # Se empregador falhou (DNS), tenta www como fallback
+    if "empregador" not in page.url and "esocial" in page.url:
+        pass  # www já está carregado
+    elif "error" in (await page.title()).lower() or len(await page.content()) < 500:
+        await page.goto("https://www.esocial.gov.br/portal/", wait_until="domcontentloaded", timeout=_ESOCIAL_TIMEOUT)
+        await page.wait_for_timeout(3000)
+
+    # Tenta navegar para a área do empregador se estiver na www
     for sel in ["a:has-text('Empregador')", "a[href*='empregador']", "a[href*='Empregador']",
                 "a:has-text('Acessar')", "button:has-text('Acessar')"]:
         try:
@@ -1486,9 +1749,10 @@ async def _consultar_cnd_federal(cnpj: str) -> dict:
     cnpj_digits = re.sub(r'\D', '', cnpj)
 
     # 1. Tentativa httpx — a RF tem endpoint de emissão via GET com CNPJ
+    # URLs em minúsculas (lowercase) — a RF mudou o roteamento e a versão com maiúsculas retorna 404
     _RF_URLS = [
-        f"https://solucoes.receita.fazenda.gov.br/Servicos/CertidaoInternet/PJ/Emitir?NrCnpj={cnpj_digits}",
-        f"https://solucoes.receita.fazenda.gov.br/Servicos/CertidaoInternet/PJ/emitir?NrCnpj={cnpj_digits}",
+        f"https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/emitir?NrCnpj={cnpj_digits}",
+        f"https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/Emitir?NrCnpj={cnpj_digits}",
     ]
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0 Safari/537.36",
@@ -1520,7 +1784,7 @@ async def _consultar_cnd_federal(cnpj: str) -> dict:
         }
 
     async def _tarefa(page):
-        url = "https://solucoes.receita.fazenda.gov.br/Servicos/CertidaoInternet/PJ/emitir"
+        url = "https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/emitir"
         await page.goto(url, wait_until="domcontentloaded", timeout=40_000)
         await page.wait_for_timeout(2000)
         for sel in ['input[name="NrCnpj"]', 'input[name="cnpj"]', 'input[id*="cnpj" i]']:
@@ -1634,7 +1898,30 @@ async def _consultar_cnd_fgts(cnpj: str, uf: str = "") -> dict:
         return result
 
     try:
-        return await _run_playwright_no_cert(_tarefa_fgts)
+        from ..config import settings as _cfg_fgts
+        proxy_url = _cfg_fgts.PROXY_RESIDENCIAL_URL
+        if proxy_url:
+            # Usa proxy residencial para contornar bloqueio Azion CDN
+            from playwright.async_api import async_playwright
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(
+                    headless=True,
+                    args=_CHROMIUM_ARGS_SEM_PROXY_FLAG,
+                    env=_env_sem_proxy(),
+                )
+                context = await browser.new_context(
+                    proxy={"server": proxy_url},
+                    ignore_https_errors=True,
+                    user_agent=_UA,
+                )
+                page = await context.new_page()
+                try:
+                    return await _tarefa_fgts(page)
+                finally:
+                    await context.close()
+                    await browser.close()
+        else:
+            return await _run_playwright_no_cert(_tarefa_fgts)
     except Exception as e:
         return {
             "status": "em_analise",

@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     # Configure em Railway → Variables: DOIS_CAPTCHA_KEY=sua_chave
     DOIS_CAPTCHA_KEY: str = ""
 
+    # Proxy residencial para portais com bloqueio de IP de datacenter (ex: CRF FGTS / Azion CDN)
+    # Formato: http://usuario:senha@host:porta
+    # Configure em Railway → Variables: PROXY_RESIDENCIAL_URL=http://user:pass@host:port
+    PROXY_RESIDENCIAL_URL: str = ""
+
     class Config:
         env_file = ".env"
 
