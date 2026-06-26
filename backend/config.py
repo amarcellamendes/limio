@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     # Modo mock (True = não chama APIs reais, gera dados simulados)
     MOCK_MODE: bool = True
 
+    # 2captcha.com — resolução automática de reCAPTCHA e CAPTCHA de imagem
+    # Configure em Railway → Variables: DOIS_CAPTCHA_KEY=sua_chave
+    DOIS_CAPTCHA_KEY: str = ""
+
     class Config:
         env_file = ".env"
 

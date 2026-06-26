@@ -457,6 +457,95 @@ async def _playwright_ok() -> bool:
         return False
 
 
+# ── 2captcha.com ─────────────────────────────────────────────────────────────
+
+async def _resolver_recaptcha_2captcha(page_url: str, site_key: str) -> str | None:
+    """Resolve reCAPTCHA v2 via 2captcha.com. Retorna token ou None."""
+    import httpx as _hx
+    from ..config import settings as _cfg
+    api_key = _cfg.DOIS_CAPTCHA_KEY
+    if not api_key:
+        return None
+    try:
+        async with _hx.AsyncClient(timeout=15) as c:
+            r = await c.post("https://api.2captcha.com/createTask", json={
+                "clientKey": api_key,
+                "task": {
+                    "type": "RecaptchaV2TaskProxyless",
+                    "websiteURL": page_url,
+                    "websiteKey": site_key,
+                }
+            })
+            data = r.json()
+            if data.get("errorId"):
+                return None
+            task_id = data["taskId"]
+
+        # Poll até 120 segundos (reCAPTCHA v2 leva ~20–40s)
+        for _ in range(24):
+            await asyncio.sleep(5)
+            async with _hx.AsyncClient(timeout=15) as c:
+                r = await c.post("https://api.2captcha.com/getTaskResult", json={
+                    "clientKey": api_key,
+                    "taskId": task_id,
+                })
+                data = r.json()
+                if data.get("status") == "ready":
+                    return data["solution"]["gRecaptchaResponse"]
+        return None
+    except Exception:
+        return None
+
+
+async def _resolver_captcha_imagem_2captcha(img_bytes: bytes) -> str | None:
+    """Resolve CAPTCHA de imagem via 2captcha.com. Retorna texto ou None."""
+    import base64, httpx as _hx
+    from ..config import settings as _cfg
+    api_key = _cfg.DOIS_CAPTCHA_KEY
+    if not api_key:
+        return None
+    try:
+        b64 = base64.b64encode(img_bytes).decode()
+        async with _hx.AsyncClient(timeout=15) as c:
+            r = await c.post("https://api.2captcha.com/createTask", json={
+                "clientKey": api_key,
+                "task": {"type": "ImageToTextTask", "body": b64}
+            })
+            data = r.json()
+            if data.get("errorId"):
+                return None
+            task_id = data["taskId"]
+
+        for _ in range(12):
+            await asyncio.sleep(5)
+            async with _hx.AsyncClient(timeout=15) as c:
+                r = await c.post("https://api.2captcha.com/getTaskResult", json={
+                    "clientKey": api_key,
+                    "taskId": task_id,
+                })
+                data = r.json()
+                if data.get("status") == "ready":
+                    return data["solution"].get("text", "").strip()
+        return None
+    except Exception:
+        return None
+
+
+async def _extrair_site_key_recaptcha(page) -> str | None:
+    """Extrai o site key do reCAPTCHA do conteúdo da página ou iframes."""
+    html = await page.content()
+    m = re.search(r'data-sitekey=["\']([A-Za-z0-9_-]{20,})["\']', html)
+    if m:
+        return m.group(1)
+    # Tenta nos iframes do reCAPTCHA
+    for fr in page.frames:
+        url_fr = fr.url or ""
+        k = re.search(r'[?&]k=([A-Za-z0-9_-]{20,})', url_fr)
+        if k:
+            return k.group(1)
+    return None
+
+
 def _env_sem_proxy() -> dict:
     """Retorna cópia do ambiente do processo sem variáveis de proxy SOCKS/HTTP.
     Passada ao Chromium via `env=` para que o processo filho não herde o proxy
@@ -1475,14 +1564,24 @@ async def _consultar_cnd_fgts(cnpj: str, uf: str = "") -> dict:
         }
 
     async def _tarefa_fgts(page):
-        await page.goto(url_fgts, wait_until="domcontentloaded", timeout=40_000)
-        await page.wait_for_timeout(3000)
+        # Azion CDN usa JS challenge — precisa de networkidle + tempo extra para resolver
+        await page.goto(url_fgts, wait_until="domcontentloaded", timeout=60_000)
+        await page.wait_for_timeout(5000)
 
         html = await page.content()
         if "Azion" in html or len(html) < 500:
+            # Aguarda o JS challenge do Azion completar (pode levar até 10s)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=20_000)
+            except Exception:
+                pass
+            await page.wait_for_timeout(5000)
+            html = await page.content()
+
+        if "Azion" in html or len(html) < 500:
             return {
                 "status": "em_analise",
-                "observacao": f"Portal CRF FGTS bloqueou acesso automático (CDN). Acesse manualmente: {url_manual}"
+                "observacao": f"Portal CRF FGTS bloqueou acesso (CDN Azion). Acesse manualmente: {url_manual}"
             }
 
         # Preenche CNPJ (pode estar com ou sem máscara)
@@ -1737,16 +1836,58 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
                             break
                     except Exception:
                         pass
-                # Verifica se tem CAPTCHA — se sim, não consegue prosseguir
+                # Verifica se tem CAPTCHA — tenta resolver antes de desistir
                 html_cap = await page.content()
                 if re.search(r'captcha|recaptcha|Recarregar|código de segurança', html_cap, re.I):
-                    return {
-                        "status": "em_analise",
-                        "observacao": (
-                            f"O portal SEMEF Manaus exige CAPTCHA e não pode ser preenchido automaticamente. "
-                            f"Acesse: {url_manual} — selecione CNPJ, informe {cnpj_digits} e preencha o CAPTCHA."
-                        ),
-                    }
+                    captcha_resolvido = False
+
+                    # Tenta reCAPTCHA v2 via 2captcha
+                    if re.search(r'recaptcha|data-sitekey', html_cap, re.I):
+                        site_key = await _extrair_site_key_recaptcha(page)
+                        if site_key:
+                            token = await _resolver_recaptcha_2captcha(url_manual, site_key)
+                            if token:
+                                await page.evaluate(f"""
+                                    document.querySelectorAll('textarea[name="g-recaptcha-response"]').forEach(el => el.value = '{token}');
+                                """)
+                                captcha_resolvido = True
+
+                    # Tenta CAPTCHA de imagem via 2captcha
+                    if not captcha_resolvido:
+                        img_sel = page.locator(
+                            'img[src*="captcha" i], img[id*="captcha" i], img[class*="captcha" i]'
+                        ).first
+                        if await img_sel.count() > 0:
+                            try:
+                                img_bytes = await img_sel.screenshot()
+                                texto = await _resolver_captcha_imagem_2captcha(img_bytes)
+                                if texto:
+                                    for csel in [
+                                        'input[id*="captcha" i]', 'input[name*="captcha" i]',
+                                        'input[placeholder*="captcha" i]', 'input[placeholder*="ódigo" i]',
+                                    ]:
+                                        el = page.locator(csel).first
+                                        if await el.count() > 0:
+                                            await el.fill(texto)
+                                            captcha_resolvido = True
+                                            break
+                            except Exception:
+                                pass
+
+                    if not captcha_resolvido:
+                        from ..config import settings as _cfg3
+                        dica = (
+                            "Configure DOIS_CAPTCHA_KEY no Railway para resolver automaticamente."
+                            if not _cfg3.DOIS_CAPTCHA_KEY else
+                            "2captcha acionado mas não resolveu. Tente novamente."
+                        )
+                        return {
+                            "status": "em_analise",
+                            "observacao": (
+                                f"SEMEF Manaus exige CAPTCHA. {dica} "
+                                f"Acesse: {url_manual} — CNPJ: {cnpj_digits}"
+                            ),
+                        }
                 # Clica em Consultar
                 for sel in ['input[type="submit"]', 'button:has-text("Consultar")',
                             'input[value*="Consultar" i]']:
@@ -1911,21 +2052,50 @@ async def _consultar_cnd_falencia(cnpj: str, uf: str = "AM", razao_social: str =
                 except Exception:
                     pass
 
-            # Tenta clicar no checkbox do reCAPTCHA v2
+            # Resolve reCAPTCHA via 2captcha (se chave configurada)
             await page.wait_for_timeout(2000)
-            try:
-                frames = page.frames
-                for fr in frames:
-                    if "recaptcha" in (fr.url or "").lower():
-                        checkbox = fr.locator(".recaptcha-checkbox-border, #recaptcha-anchor")
-                        if await checkbox.count() > 0:
-                            await checkbox.click(timeout=5000)
-                            await page.wait_for_timeout(4000)
-                            break
-            except Exception:
-                pass
+            site_key = await _extrair_site_key_recaptcha(page)
+            recaptcha_ok = False
+            if site_key:
+                token = await _resolver_recaptcha_2captcha(URL_CADASTRO, site_key)
+                if token:
+                    await page.evaluate(f"""
+                        (() => {{
+                            const inject = (v) => {{
+                                document.querySelectorAll('textarea[name="g-recaptcha-response"]').forEach(el => el.value = v);
+                                const hidden = document.getElementById('g-recaptcha-response');
+                                if (hidden) hidden.value = v;
+                            }};
+                            inject('{token}');
+                            // Tenta disparar callback do reCAPTCHA
+                            try {{
+                                const cfg = window.___grecaptcha_cfg;
+                                if (cfg && cfg.clients) {{
+                                    Object.values(cfg.clients).forEach(c => {{
+                                        const cb = Object.values(c).find(v => v && typeof v.callback === 'function');
+                                        if (cb) cb.callback('{token}');
+                                    }});
+                                }}
+                            }} catch(e) {{}}
+                        }})();
+                    """)
+                    await page.wait_for_timeout(1500)
+                    recaptcha_ok = True
 
-            # Checkbox de confirmação
+            if not recaptcha_ok:
+                # Fallback: tenta clicar no checkbox (pode funcionar em testes simples)
+                try:
+                    for fr in page.frames:
+                        if "recaptcha" in (fr.url or "").lower():
+                            checkbox = fr.locator(".recaptcha-checkbox-border, #recaptcha-anchor")
+                            if await checkbox.count() > 0:
+                                await checkbox.click(timeout=5000)
+                                await page.wait_for_timeout(4000)
+                                break
+                except Exception:
+                    pass
+
+            # Checkbox de confirmação (termos)
             for sel in ['input[type="checkbox"]']:
                 try:
                     els = page.locator(sel)
@@ -1963,16 +2133,20 @@ async def _consultar_cnd_falencia(cnpj: str, uf: str = "AM", razao_social: str =
             )
 
             if not num_m or not dat_m:
-                # reCAPTCHA ou erro inesperado
                 title_m = re.search(r'<title[^>]*>([^<]+)</title>', html_conf, re.I)
                 title = title_m.group(1).strip() if title_m else "(sem título)"
+                from ..config import settings as _cfg2
+                captcha_hint = (
+                    "Configure a variável DOIS_CAPTCHA_KEY no Railway com sua chave do 2captcha.com "
+                    "para resolver o reCAPTCHA automaticamente."
+                    if not _cfg2.DOIS_CAPTCHA_KEY else
+                    "O 2captcha foi acionado mas não obteve o token a tempo. Tente novamente."
+                )
                 return {
                     "status": "em_analise",
                     "observacao": (
-                        f"TJAM: formulário enviado mas o número do pedido não foi encontrado "
-                        f"(título da página: {title}). "
-                        f"Pode ser que o reCAPTCHA não foi validado automaticamente. "
-                        f"Acesse manualmente: {URL_CADASTRO}"
+                        f"TJAM: reCAPTCHA não resolvido (título: {title}). {captcha_hint} "
+                        f"Ou acesse manualmente: {URL_CADASTRO}"
                     ),
                 }
 

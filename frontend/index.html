@@ -2020,8 +2020,10 @@
                 <td class="py-2">
                   <div class="flex gap-1 flex-wrap">
                     <button @click="consultarCertidaoAuto(cert)" class="text-xs bg-teal-600 hover:bg-teal-700 text-white px-2 py-1 rounded-lg">🔍 Auto</button>
+                    <button x-show="cert.arquivo_path" @click="visualizarCertidaoPdf(cert)"
+                            class="text-xs border border-teal-400 text-teal-700 hover:bg-teal-50 px-2 py-1 rounded-lg" title="Visualizar PDF">👁 Ver</button>
                     <button x-show="cert.arquivo_path" @click="downloadCertidaoPdf(cert)"
-                            class="text-xs border border-teal-400 text-teal-700 hover:bg-teal-50 px-2 py-1 rounded-lg" title="Baixar PDF">📄 PDF</button>
+                            class="text-xs border border-gray-300 text-gray-600 hover:bg-gray-50 px-2 py-1 rounded-lg" title="Baixar PDF">⬇ PDF</button>
                     <button @click="abrirCertidaoModal(cert)" class="btn-secondary text-xs px-2 py-1">Editar</button>
                     <button @click="excluirCertidao(cert.id)" class="text-xs text-red-500 hover:text-red-700 px-2 py-1">✕</button>
                   </div>
@@ -5220,13 +5222,27 @@ function app() {
         this.certidoes.selecionadas = this.certidoes.lista.map(c => c.id)
       }
     },
+    async _fetchCertidaoPdfBlob(cert) {
+      const res = await fetch(`/api/certidoes/${cert.id}/download-pdf`, {
+        headers: { Authorization: `Bearer ${this.token}` }
+      })
+      if (!res.ok) { const e = await res.json().catch(()=>{}); throw new Error(e?.detail || 'PDF não disponível') }
+      return await res.blob()
+    },
+    async visualizarCertidaoPdf(cert) {
+      try {
+        const blob = await this._fetchCertidaoPdfBlob(cert)
+        const url = URL.createObjectURL(blob)
+        window.open(url, '_blank')
+        // Revoga após delay para dar tempo ao browser abrir
+        setTimeout(() => URL.revokeObjectURL(url), 30000)
+      } catch(e) {
+        this.showToast('Erro ao visualizar PDF: ' + (e.message || e), 'error')
+      }
+    },
     async downloadCertidaoPdf(cert) {
       try {
-        const res = await fetch(`/api/certidoes/${cert.id}/download-pdf`, {
-          headers: { Authorization: `Bearer ${this.token}` }
-        })
-        if (!res.ok) { const e = await res.json().catch(()=>{}); throw new Error(e?.detail || 'PDF não disponível') }
-        const blob = await res.blob()
+        const blob = await this._fetchCertidaoPdfBlob(cert)
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
