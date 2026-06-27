@@ -1887,9 +1887,10 @@ async def _consultar_cnd_federal(cnpj: str) -> dict:
             "observacao": "Portal da Receita Federal bloqueado para acesso automatizado. Acesse manualmente: https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/emitir"
         }
 
+    _URL_RF = "https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/emitir"
+
     async def _tarefa(page):
-        url = "https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/emitir"
-        await page.goto(url, wait_until="domcontentloaded", timeout=40_000)
+        await page.goto(_URL_RF, wait_until="domcontentloaded", timeout=40_000)
         await page.wait_for_timeout(2000)
         for sel in ['input[name="NrCnpj"]', 'input[name="cnpj"]', 'input[id*="cnpj" i]']:
             try:
@@ -1904,14 +1905,43 @@ async def _consultar_cnd_federal(cnpj: str) -> dict:
             except Exception:
                 pass
         await page.wait_for_load_state("networkidle", timeout=40_000)
-        return _parse_certidao_html(await page.content(), "cnd_federal", page_url=page.url)
+        result = _parse_certidao_html(await page.content(), "cnd_federal", page_url=page.url)
+        if result["status"] == "regular":
+            result = await _capturar_pdf_certidao(page, result)
+        return result
 
+    # Usa proxy residencial — a RF bloqueia IPs de datacenter
     try:
-        return await _run_playwright_no_cert(_tarefa)
+        manager = get_proxy_manager()
+        proxy_url: str | None = None
+        if manager:
+            proxy_url = await manager.get_proxy(prefer_brazil=True)
+        if not proxy_url:
+            from ..config import settings as _cfg_rf
+            proxy_url = _cfg_rf.PROXY_RESIDENCIAL_URL or None
+
+        if proxy_url:
+            from playwright.async_api import async_playwright as _apw_rf
+            async with _apw_rf() as pw:
+                browser = await pw.chromium.launch(
+                    headless=True, args=_CHROMIUM_ARGS_SEM_PROXY_FLAG, env=_env_sem_proxy()
+                )
+                context = await browser.new_context(
+                    proxy={"server": proxy_url}, ignore_https_errors=True, user_agent=_UA
+                )
+                page = await context.new_page()
+                try:
+                    resultado_rf = await _tarefa(page)
+                finally:
+                    await context.close()
+                    await browser.close()
+            return resultado_rf
+        else:
+            return await _run_playwright_no_cert(_tarefa)
     except Exception as e:
         return {
             "status": "em_analise",
-            "observacao": f"Portal RF inacessível: {str(e)[:100]}. Acesse: https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/emitir"
+            "observacao": f"Portal RF inacessível: {str(e)[:100]}. Acesse: {_URL_RF}"
         }
 
 
@@ -2321,6 +2351,8 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
                         pass
                 html = await page.content()
                 result = _parse_certidao_html(html, "cnd_municipal", page_url=page.url)
+                if result["status"] == "regular":
+                    result = await _capturar_pdf_certidao(page, result)
                 if result["status"] == "em_analise":
                     result["observacao"] = (result.get("observacao") or "") + f" Acesse: {url_manual}"
                 return result
@@ -2391,13 +2423,36 @@ async def _consultar_cnd_falencia(cnpj: str, uf: str = "AM", razao_social: str =
                     "observacao": "Playwright não disponível. Acesse: https://consultasaj.tjam.jus.br/sco/abrirCadastro.do"}
 
         EMAIL_ESCRITORIO = "processos@mendeselimaconsultoria.com"
-        URL_CADASTRO = "https://consultasaj.tjam.jus.br/sco/abrirCadastro.do"
+        # TJAM tem dois portais SAJ — tenta o consultasaj primeiro, depois esaj como fallback
+        _TJAM_URLS_CADASTRO = [
+            "https://consultasaj.tjam.jus.br/sco/abrirCadastro.do",
+            "https://esaj.tjam.jus.br/sco/abrirCadastro.do",
+        ]
+        URL_CADASTRO = _TJAM_URLS_CADASTRO[0]
         URL_DOWNLOAD = "https://consultasaj.tjam.jus.br/sco/abrirDownload.do"
 
         async def _tarefa_tjam(page):
-            # ── Passo 1: preenche o formulário de pedido ─────────────────────
-            await page.goto(URL_CADASTRO, wait_until="domcontentloaded", timeout=40_000)
-            await page.wait_for_timeout(3000)
+            # ── Passo 1: preenche o formulário de pedido — tenta as duas URLs ─
+            carregou = False
+            for _url_tjam in _TJAM_URLS_CADASTRO:
+                try:
+                    await page.goto(_url_tjam, wait_until="domcontentloaded", timeout=30_000)
+                    await page.wait_for_timeout(2000)
+                    titulo = await page.title()
+                    if "404" not in titulo and len(await page.content()) > 500:
+                        carregou = True
+                        break
+                except Exception:
+                    pass
+            if not carregou:
+                return {
+                    "status": "em_analise",
+                    "observacao": (
+                        "Portal TJAM inacessível (404 nos dois endpoints SAJ). "
+                        "Acesse manualmente: https://consultasaj.tjam.jus.br/sco/abrirCadastro.do"
+                    ),
+                }
+            await page.wait_for_timeout(1000)
 
             # Comarca: Manaus
             for sel in ['select[name*="comarca" i]', 'select[id*="comarca" i]', 'select']:
