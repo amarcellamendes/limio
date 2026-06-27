@@ -274,7 +274,8 @@ async def consultar_dfe(
     # Carrega certificado
     key, cert = _load_pfx(cert_path, cert_senha)
 
-    # Monta e assina distDFeInt
+    # Monta distDFeInt — NFeDistribuicaoDFe autentica via mTLS (certificado no HTTPS),
+    # não por assinatura XML. Adicionar <Signature> viola o schema e causa cStat 215.
     dist_xml = (
         f'<distDFeInt xmlns="{NS_NFE}" versao="1.01">'
         f"<tpAmb>{tp_amb}</tpAmb>"
@@ -285,8 +286,7 @@ async def consultar_dfe(
         "</distNSU>"
         "</distDFeInt>"
     )
-    signed_xml = _sign_dist_dfe_int(dist_xml.encode(), key, cert)
-    soap_body  = _build_soap(signed_xml, uf_code)
+    soap_body = _build_soap(dist_xml, uf_code)
 
     # Exporta cert/key como PEM temporários para mTLS
     cp = _cert_pem(cert)

@@ -2307,17 +2307,46 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
                                 img_bytes = await img_sel.screenshot()
                                 texto = await _resolver_captcha_imagem_2captcha(img_bytes)
                                 if texto:
-                                    for csel in [
+                                    # Seletores específicos do SEMEF/STM + genéricos gov.br
+                                    _CAPTCHA_INPUTS = [
                                         'input[id*="captcha" i]', 'input[name*="captcha" i]',
-                                        'input[placeholder*="captcha" i]', 'input[placeholder*="ódigo" i]',
-                                        'input[name*="codigo" i]', 'input[name*="segur" i]',
-                                        'input[id*="codigo" i]', 'input[id*="segur" i]',
-                                    ]:
+                                        'input[placeholder*="captcha" i]',
+                                        'input[name*="codigo" i]', 'input[id*="codigo" i]',
+                                        'input[name*="segur" i]', 'input[id*="segur" i]',
+                                        'input[name*="codigoSeg" i]', 'input[id*="codigoSeg" i]',
+                                        'input[name*="txtCaptcha" i]', 'input[id*="txtCaptcha" i]',
+                                        'input[name*="imgseg" i]', 'input[id*="imgseg" i]',
+                                        'input[placeholder*="ódigo" i]', 'input[placeholder*="egur" i]',
+                                    ]
+                                    for csel in _CAPTCHA_INPUTS:
                                         el = page.locator(csel).first
                                         if await el.count() > 0:
                                             await el.fill(texto)
                                             captcha_resolvido = True
                                             break
+                                    # Fallback: preenche o input de texto mais próximo da imagem do captcha
+                                    if not captcha_resolvido:
+                                        try:
+                                            el = page.locator(f"input[type='text']:near(img[src*='captcha' i], img[src*='gera' i], img[src*='segur' i])").first
+                                            if await el.count() > 0:
+                                                await el.fill(texto)
+                                                captcha_resolvido = True
+                                        except Exception:
+                                            pass
+                                    # Último recurso: segundo input de texto na página (primeiro é o CNPJ)
+                                    if not captcha_resolvido:
+                                        try:
+                                            inputs = page.locator('input[type="text"]')
+                                            count = await inputs.count()
+                                            for i in range(1, count):  # pula o primeiro (CNPJ)
+                                                el = inputs.nth(i)
+                                                val = await el.get_attribute("value") or ""
+                                                if not val or not any(c.isdigit() for c in val):
+                                                    await el.fill(texto)
+                                                    captcha_resolvido = True
+                                                    break
+                                        except Exception:
+                                            pass
                             except Exception:
                                 pass
 
