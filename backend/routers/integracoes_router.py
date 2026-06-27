@@ -922,13 +922,22 @@ async def _run_ecac_com_proxy(
                 manager.record_failure(proxy_url)
             is_last = tentativa == max_tentativas - 1
             if is_last:
-                raise
+                break  # sai do loop para tentar sem proxy abaixo
             # Só retenta com proxy diferente em erros de rede/proxy
             err_str = str(e).lower()
             if not any(k in err_str for k in ("net::", "connection", "proxy", "timeout", "socks")):
                 raise
 
-    raise RuntimeError("Todas as tentativas de proxy falharam")
+    # Fallback final sem proxy — caso todos os proxies falhem (SOCKS bloqueado, IP inválido etc.)
+    if pfx_path and pfx_senha is not None:
+        return await _run_playwright_ecac_nss(pfx_path, pfx_senha, tarefa_fn, proxy_url=None)
+    return await _run_playwright_multi(
+        cert_pem, key_pem,
+        origins or [],
+        tarefa_fn,
+        extra_chromium_args=extra_chromium_args,
+        proxy_url=None,
+    )
 
 
 async def _run_playwright_no_cert(tarefa_fn, proxy_url: str | None = None) -> dict:
@@ -2268,7 +2277,7 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
         async def _tarefa_manaus(page):
             # Tenta acesso direto ao servlet STM (pode funcionar sem CAPTCHA via POST)
             try:
-                await page.goto(url_manual, wait_until="domcontentloaded", timeout=30_000)
+                await page.goto(url_manual, wait_until="domcontentloaded", timeout=60_000)
                 await page.wait_for_timeout(2000)
                 # Seleciona radio "CNPJ" se existir
                 for sel in ['input[value="CNPJ"]', 'input[type="radio"][value*="cnpj" i]',
