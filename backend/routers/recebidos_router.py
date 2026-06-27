@@ -327,12 +327,28 @@ async def sincronizar_cliente(
             )
 
             cstat = resultado.get("cstat", "")
+            novo_nsu_ret = resultado.get("ultimo_nsu", ultimo_nsu)
+
+            # Sempre salva o ultNSU retornado — evita reiniciar do 0 em erros futuros
+            if novo_nsu_ret and novo_nsu_ret != ultimo_nsu:
+                cliente.ultimo_nsu_nfe = novo_nsu_ret
+                await db.commit()
+
             # cstat 138 = sem novos documentos desde o último NSU
             if cstat == "138":
                 return {
                     "importados": 0,
                     "mensagem": "Nenhum documento novo desde a última sincronização.",
-                    "ultimo_nsu": resultado.get("ultimo_nsu", ultimo_nsu),
+                    "ultimo_nsu": novo_nsu_ret,
+                }
+
+            # cstat 656 = consumo indevido — SEFAZ pede para aguardar e usar ultNSU
+            if cstat == "656":
+                return {
+                    "importados": 0,
+                    "mensagem": "SEFAZ: aguarde 1 hora antes de sincronizar novamente (cStat 656).",
+                    "ultimo_nsu": novo_nsu_ret,
+                    "aviso": resultado.get("xmotivo", ""),
                 }
 
             if cstat not in ("137", "138"):
