@@ -4580,14 +4580,24 @@ function app() {
       if (!this.clientes.length) { await this.carregarClientes() }
       this.sincronizando = true
       let total = 0
+      let erros = []
       for (const c of this.clientes) {
         try {
           const r = await this.api(`/api/recebidos/sincronizar/${c.id}`, 'POST')
           total += r.importados || 0
-        } catch(e) {}
+          if (r.aviso) erros.push(`${c.razao_social}: ${r.aviso}`)
+        } catch(e) {
+          erros.push(`${c.razao_social}: ${e.message || 'Erro na sincronização'}`)
+        }
       }
       this.sincronizando = false
-      this.showToast(`Sincronização concluída — ${total} novo(s) documento(s) importado(s)`)
+      if (total > 0) {
+        this.showToast(`Sincronização concluída — ${total} novo(s) documento(s) importado(s)`)
+      } else if (erros.length) {
+        this.showToast(erros[0], 'error')
+      } else {
+        this.showToast('Sincronização concluída — nenhum documento novo encontrado')
+      }
       await this.carregarRecebidos()
       await this.carregarDashRecebidos()
     },
