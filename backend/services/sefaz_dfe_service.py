@@ -74,7 +74,13 @@ def _sign_dist_dfe_int(xml_bytes: bytes, key, cert) -> str:
     """
     Assina o elemento distDFeInt com assinatura enveloped.
     Retorna string XML com o elemento <Signature> inserido como filho.
+
+    O nsmap explícito garante que o lxml use xmlns="...xmldsig#" (namespace padrão)
+    em vez de gerar prefixos automáticos como ns0:, que o SEFAZ rejeita com cStat 215.
     """
+    # nsmap para todos os elementos da assinatura — força namespace padrão xmldsig
+    _SIG_NS = {None: NS_SIG}
+
     root = etree.fromstring(xml_bytes)
     root.set("Id", "distDFeInt")
 
@@ -82,8 +88,8 @@ def _sign_dist_dfe_int(xml_bytes: bytes, key, cert) -> str:
     c14n_ref = etree.tostring(root, method="c14n", with_comments=False)
     digest_b64 = base64.b64encode(hashlib.sha256(c14n_ref).digest()).decode()
 
-    # 2. Monta SignedInfo
-    si = etree.Element(f"{{{NS_SIG}}}SignedInfo")
+    # 2. Monta SignedInfo com namespace padrão xmldsig
+    si = etree.Element(f"{{{NS_SIG}}}SignedInfo", nsmap=_SIG_NS)
     cm = etree.SubElement(si, f"{{{NS_SIG}}}CanonicalizationMethod")
     cm.set("Algorithm", "http://www.w3.org/TR/2001/REC-xml-c14n-20010315")
     sm = etree.SubElement(si, f"{{{NS_SIG}}}SignatureMethod")
@@ -108,8 +114,8 @@ def _sign_dist_dfe_int(xml_bytes: bytes, key, cert) -> str:
     # 4. KeyInfo: certificado em DER/base64
     cert_der_b64 = base64.b64encode(cert.public_bytes(serialization.Encoding.DER)).decode()
 
-    # 5. Monta e insere elemento Signature
-    sig_el = etree.SubElement(root, f"{{{NS_SIG}}}Signature")
+    # 5. Monta elemento Signature com namespace padrão e insere no root
+    sig_el = etree.Element(f"{{{NS_SIG}}}Signature", nsmap=_SIG_NS)
     sig_el.append(si)
     sv = etree.SubElement(sig_el, f"{{{NS_SIG}}}SignatureValue")
     sv.text = sig_b64
@@ -117,6 +123,7 @@ def _sign_dist_dfe_int(xml_bytes: bytes, key, cert) -> str:
     x509d = etree.SubElement(ki, f"{{{NS_SIG}}}X509Data")
     x509c = etree.SubElement(x509d, f"{{{NS_SIG}}}X509Certificate")
     x509c.text = cert_der_b64
+    root.append(sig_el)
 
     return etree.tostring(root, encoding="unicode")
 
