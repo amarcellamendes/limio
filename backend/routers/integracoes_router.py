@@ -1868,8 +1868,16 @@ async def _consultar_cnd_federal(cnpj: str) -> dict:
 
     cnpj_digits = re.sub(r'\D', '', cnpj)
 
+    # Resolve proxy para httpx e Playwright
+    _proxy_rf: str | None = None
+    _pm_rf = get_proxy_manager()
+    if _pm_rf:
+        _proxy_rf = await _pm_rf.get_proxy(prefer_brazil=True)
+    if not _proxy_rf:
+        from ..config import settings as _cfg_rf0
+        _proxy_rf = _cfg_rf0.PROXY_RESIDENCIAL_URL or None
+
     # 1. Tentativa httpx — a RF tem endpoint de emissão via GET com CNPJ
-    # URLs em minúsculas (lowercase) — a RF mudou o roteamento e a versão com maiúsculas retorna 404
     _RF_URLS = [
         f"https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/emitir?NrCnpj={cnpj_digits}",
         f"https://solucoes.receita.fazenda.gov.br/servicos/certidaointernet/pj/Emitir?NrCnpj={cnpj_digits}",
@@ -1881,14 +1889,16 @@ async def _consultar_cnd_federal(cnpj: str) -> dict:
     }
     for url in _RF_URLS:
         try:
-            async with _httpx.AsyncClient(verify=False, timeout=25, follow_redirects=True, headers=headers) as c:
+            client_kwargs: dict = dict(verify=False, timeout=30, follow_redirects=True, headers=headers)
+            if _proxy_rf:
+                client_kwargs["proxies"] = {"https://": _proxy_rf, "http://": _proxy_rf}
+            async with _httpx.AsyncClient(**client_kwargs) as c:
                 r = await c.get(url)
                 if r.status_code == 200 and len(r.text) > 500 and "502" not in r.text[:200]:
                     result = _parse_certidao_html(r.text, "cnd_federal", page_url=str(r.url))
                     if result["status"] in ("regular", "irregular"):
                         return result
                     if result["status"] == "em_analise":
-                        # Retorna resultado parcial se teve conteúdo
                         title_m = re.search(r'<title[^>]*>([^<]+)</title>', r.text, re.I)
                         title = title_m.group(1).strip() if title_m else ""
                         if "certid" in title.lower() or "receita" in title.lower() or "pgfn" in title.lower():
@@ -1926,34 +1936,10 @@ async def _consultar_cnd_federal(cnpj: str) -> dict:
             result = await _capturar_pdf_certidao(page, result)
         return result
 
-    # Usa proxy residencial — a RF bloqueia IPs de datacenter
+    # 2. Playwright — usa _proxy_rf já resolvido acima
     try:
-        manager = get_proxy_manager()
-        proxy_url: str | None = None
-        if manager:
-            proxy_url = await manager.get_proxy(prefer_brazil=True)
-        if not proxy_url:
-            from ..config import settings as _cfg_rf
-            proxy_url = _cfg_rf.PROXY_RESIDENCIAL_URL or None
-
-        if proxy_url:
-            from playwright.async_api import async_playwright as _apw_rf
-            async with _apw_rf() as pw:
-                browser = await pw.chromium.launch(
-                    headless=True, args=_CHROMIUM_ARGS_SEM_PROXY_FLAG, env=_env_sem_proxy()
-                )
-                context = await browser.new_context(
-                    proxy={"server": proxy_url}, ignore_https_errors=True, user_agent=_UA
-                )
-                page = await context.new_page()
-                try:
-                    resultado_rf = await _tarefa(page)
-                finally:
-                    await context.close()
-                    await browser.close()
-            return resultado_rf
-        else:
-            return await _run_playwright_no_cert(_tarefa)
+        # _run_playwright_no_cert já aplica proxy automaticamente quando disponível
+        return await _run_playwright_no_cert(_tarefa, proxy_url=_proxy_rf)
     except Exception as e:
         return {
             "status": "em_analise",
