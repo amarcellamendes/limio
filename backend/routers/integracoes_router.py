@@ -129,11 +129,14 @@ async def buscar_esocial(
         cert_pem, key_pem = await _cert_ou_erro(cliente, senha)
 
     try:
-        # Railway roteia tráfego via SOCKS5 transparente — DoH + host-resolver-rules
-        # não resolve porque o bloqueio é no nível de rede, antes do Chromium.
-        # Usa o mesmo proxy estático que funciona para FGTS (Webshare residencial).
+        # Railway bloqueia empregador.esocial.gov.br no nível de rede.
+        # Usa ProxyManager (Webshare) ou PROXY_RESIDENCIAL_URL estático.
         from ..config import settings as _cfg_esocial
         proxy_url_esocial = _cfg_esocial.PROXY_RESIDENCIAL_URL or None
+        if not proxy_url_esocial:
+            _pm_es = get_proxy_manager()
+            if _pm_es:
+                proxy_url_esocial = await _pm_es.get_proxy(prefer_brazil=True)
 
         resultado = await _run_playwright_multi(
             cert_pem, key_pem,
@@ -916,19 +919,32 @@ async def _run_ecac_com_proxy(
     raise RuntimeError("Todas as tentativas de proxy falharam")
 
 
-async def _run_playwright_no_cert(tarefa_fn) -> dict:
-    """Playwright sem certificado cliente — para portais públicos (CND Federal, TST, FGTS)."""
+async def _run_playwright_no_cert(tarefa_fn, proxy_url: str | None = None) -> dict:
+    """Playwright sem certificado cliente — para portais públicos (CND Federal, TST, FGTS).
+    Usa proxy residencial automaticamente via ProxyManager se disponível.
+    """
     from playwright.async_api import async_playwright
+
+    # Busca proxy do ProxyManager ou fallback estático
+    if proxy_url is None:
+        manager = get_proxy_manager()
+        if manager:
+            proxy_url = await manager.get_proxy(prefer_brazil=True)
+        if not proxy_url:
+            from ..config import settings as _cfg_pub
+            proxy_url = _cfg_pub.PROXY_RESIDENCIAL_URL or None
+
+    args = _CHROMIUM_ARGS_SEM_PROXY_FLAG if proxy_url else _CHROMIUM_ARGS
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
             headless=True,
-            args=_CHROMIUM_ARGS,
+            args=args,
             env=_env_sem_proxy(),
         )
-        context = await browser.new_context(
-            ignore_https_errors=True,
-            user_agent=_UA,
-        )
+        ctx_kwargs: dict = dict(ignore_https_errors=True, user_agent=_UA)
+        if proxy_url:
+            ctx_kwargs["proxy"] = {"server": proxy_url}
+        context = await browser.new_context(**ctx_kwargs)
         page = await context.new_page()
         try:
             return await tarefa_fn(page)
