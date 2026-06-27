@@ -80,8 +80,7 @@ async def buscar_pgdas(
                     tarefa_fn=lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano, usar_procuracao=True),
                     cert_pem=cert_pem,
                     key_pem=key_pem,
-                    origins=["https://cav.receita.fazenda.gov.br", "https://acesso.gov.br",
-                             "https://sso.acesso.gov.br"],
+                    origins=_ECAC_ORIGINS,
                     prefer_brazil=True,
                 )
         else:
@@ -89,7 +88,7 @@ async def buscar_pgdas(
                 tarefa_fn=lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano, usar_procuracao=False),
                 cert_pem=cert_pem,
                 key_pem=key_pem,
-                origins=["https://cav.receita.fazenda.gov.br", "https://acesso.gov.br"],
+                origins=_ECAC_ORIGINS,
                 prefer_brazil=True,
             )
         for rec in resultado.get("receitas", []):
@@ -129,22 +128,15 @@ async def buscar_esocial(
         cert_pem, key_pem = await _cert_ou_erro(cliente, senha)
 
     try:
-        # Railway bloqueia empregador.esocial.gov.br no nível de rede.
-        # Usa ProxyManager (Webshare) ou PROXY_RESIDENCIAL_URL estático.
-        from ..config import settings as _cfg_esocial
-        proxy_url_esocial = _cfg_esocial.PROXY_RESIDENCIAL_URL or None
-        if not proxy_url_esocial:
-            _pm_es = get_proxy_manager()
-            if _pm_es:
-                proxy_url_esocial = await _pm_es.get_proxy(prefer_brazil=True)
-
-        resultado = await _run_playwright_multi(
-            cert_pem, key_pem,
-            ["https://empregador.esocial.gov.br", "https://www.esocial.gov.br",
-             "https://login.esocial.gov.br", "https://acesso.gov.br",
-             "https://sso.acesso.gov.br"],
-            lambda p, c: _tarefa_esocial(p, c, cliente.cnpj, ano, usar_procuracao),
-            proxy_url=proxy_url_esocial,
+        # Usa _run_ecac_com_proxy (pool rotativo Webshare + retry) igual ao PGDAS.
+        # O IP estático de PROXY_RESIDENCIAL_URL é frequentemente bloqueado pelo eSocial.
+        resultado = await _run_ecac_com_proxy(
+            tarefa_fn=lambda p, c: _tarefa_esocial(p, c, cliente.cnpj, ano, usar_procuracao),
+            cert_pem=cert_pem,
+            key_pem=key_pem,
+            origins=_ESOCIAL_ORIGINS,
+            prefer_brazil=True,
+            max_tentativas=3,
         )
         for f in resultado.get("folhas", []):
             await _upsert_folha(db, escritorio.id, cliente.id, f["competencia"], f["valor_total_folha"])
@@ -618,6 +610,26 @@ _CHROMIUM_ARGS_SEM_PROXY_FLAG = [
     # Versão SEM --no-proxy-server — usada quando queremos passar proxy explícito
     "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
     "--disable-blink-features=AutomationControlled",
+]
+
+
+# Origens GOV.BR / e-CAC para Playwright client_certificates (cada subdomínio precisa ser listado)
+_ECAC_ORIGINS = [
+    "https://cav.receita.fazenda.gov.br",
+    "https://acesso.gov.br",
+    "https://sso.acesso.gov.br",
+    "https://login.acesso.gov.br",
+    "https://contas.acesso.gov.br",
+    "https://www.acesso.gov.br",
+]
+_ESOCIAL_ORIGINS = [
+    "https://empregador.esocial.gov.br",
+    "https://www.esocial.gov.br",
+    "https://login.esocial.gov.br",
+    "https://acesso.gov.br",
+    "https://sso.acesso.gov.br",
+    "https://login.acesso.gov.br",
+    "https://contas.acesso.gov.br",
 ]
 
 
