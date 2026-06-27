@@ -2277,7 +2277,10 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
         async def _tarefa_manaus(page):
             # Tenta acesso direto ao servlet STM (pode funcionar sem CAPTCHA via POST)
             try:
-                await page.goto(url_manual, wait_until="domcontentloaded", timeout=60_000)
+                # wait_until="commit" dispara ao primeiro byte — portal SEMEF é muito lento,
+                # não esperar networkidle/domcontentloaded que podem demorar 90s+
+                await page.goto(url_manual, wait_until="commit", timeout=90_000)
+                await page.wait_for_load_state("domcontentloaded", timeout=60_000)
                 await page.wait_for_timeout(2000)
                 # Seleciona radio "CNPJ" se existir
                 for sel in ['input[value="CNPJ"]', 'input[type="radio"][value*="cnpj" i]',
@@ -2414,10 +2417,15 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
                     "observacao": f"Erro ao acessar SEMEF: {str(e)[:120]}. Acesse: {url_manual}",
                 }
 
+        # Tenta sem proxy primeiro — SEMEF é portal municipal, menos restritivo
         try:
-            return await _run_playwright_no_cert(_tarefa_manaus)
-        except Exception as e:
-            return {"status": "em_analise", "observacao": f"Erro: {str(e)[:120]}. Acesse: {url_manual}"}
+            return await _run_playwright_no_cert(_tarefa_manaus, proxy_url=None)
+        except Exception as e_noproxy:
+            # Fallback com proxy se falhar sem proxy
+            try:
+                return await _run_playwright_no_cert(_tarefa_manaus)
+            except Exception as e:
+                return {"status": "em_analise", "observacao": f"Erro ao acessar SEMEF: {str(e)[:120]}. Acesse: {url_manual}"}
 
     # ── Outros municípios ─────────────────────────────────────────────────────
     _PORTAIS = {

@@ -56,7 +56,9 @@ class ProxyManager:
     # ── Carregamento ────────────────────────────────────────────────────────
 
     async def _fetch_webshare(self) -> list[ProxyEntry]:
-        """Busca todos os proxies da API Webshare v2 (paginada)."""
+        """Busca todos os proxies da API Webshare v2 (paginada).
+        Prioriza proxies HTTP — SOCKS5 é bloqueado por portais gov.br (eSocial, RF, TST).
+        """
         entries: list[ProxyEntry] = []
         page = 1
         async with httpx.AsyncClient(timeout=15) as client:
@@ -70,8 +72,14 @@ class ProxyManager:
                     break
                 data = r.json()
                 for p in data.get("results", []):
+                    # Detecta tipo real do proxy — Webshare entrega tanto HTTP quanto SOCKS5
+                    proxy_type = (p.get("proxy_type") or "http").lower()
+                    if "socks" in proxy_type:
+                        scheme = "socks5"
+                    else:
+                        scheme = "http"
                     url = (
-                        f"http://{p['username']}:{p['password']}"
+                        f"{scheme}://{p['username']}:{p['password']}"
                         f"@{p['proxy_address']}:{p['port']}"
                     )
                     entries.append(ProxyEntry(
@@ -81,7 +89,9 @@ class ProxyManager:
                 if not data.get("next"):
                     break
                 page += 1
-        return entries
+        # Prioriza HTTP sobre SOCKS5 (portais gov.br bloqueiam SOCKS)
+        http_only = [e for e in entries if e.url.startswith("http://")]
+        return http_only if http_only else entries
 
     async def _ensure_loaded(self) -> None:
         now = time.time()
