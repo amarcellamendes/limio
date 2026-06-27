@@ -920,12 +920,15 @@ async def _run_ecac_com_proxy(
         except Exception as e:
             if proxy_url and manager:
                 manager.record_failure(proxy_url)
+            err_str = str(e).lower()
             is_last = tentativa == max_tentativas - 1
+            # Erro SOCKS: proxy configurado como http:// mas é servidor SOCKS5 — pula direto ao fallback
+            if "socks" in err_str:
+                break
             if is_last:
                 break  # sai do loop para tentar sem proxy abaixo
             # Só retenta com proxy diferente em erros de rede/proxy
-            err_str = str(e).lower()
-            if not any(k in err_str for k in ("net::", "connection", "proxy", "timeout", "socks")):
+            if not any(k in err_str for k in ("net::", "connection", "proxy", "timeout")):
                 raise
 
     # Fallback final sem proxy — caso todos os proxies falhem (SOCKS bloqueado, IP inválido etc.)
@@ -2277,10 +2280,10 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
         async def _tarefa_manaus(page):
             # Tenta acesso direto ao servlet STM (pode funcionar sem CAPTCHA via POST)
             try:
-                # wait_until="commit" dispara ao primeiro byte — portal SEMEF é muito lento,
-                # não esperar networkidle/domcontentloaded que podem demorar 90s+
+                # wait_until="commit" dispara ao primeiro byte — portal SEMEF é lento,
+                # não esperar networkidle que pode demorar 90s+. Espera fixa após commit.
                 await page.goto(url_manual, wait_until="commit", timeout=90_000)
-                await page.wait_for_load_state("domcontentloaded", timeout=60_000)
+                await page.wait_for_timeout(8_000)  # aguarda DOM ficar interativo
                 await page.wait_for_timeout(2000)
                 # Seleciona radio "CNPJ" se existir
                 for sel in ['input[value="CNPJ"]', 'input[type="radio"][value*="cnpj" i]',

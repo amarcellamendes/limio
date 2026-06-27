@@ -124,8 +124,12 @@ class ProxyManager:
                     pass  # Fallback para proxy estático abaixo
 
             # Proxy estático via PROXY_RESIDENCIAL_URL
+            # Normaliza URL: alguns provedores entregam socks5 com prefixo http://
+            # Detectar isso é impossível sem testar, então usamos como está.
             if self._static_url and not self._proxies:
-                self._proxies = [ProxyEntry(url=self._static_url, country_code="")]
+                static = self._static_url.strip()
+                # Se o usuário configurou http:// mas porta 6673/1080/4145 (SOCKS típico), avisa no log
+                self._proxies = [ProxyEntry(url=static, country_code="")]
                 self._last_refresh = time.time()
 
     # ── Seleção ─────────────────────────────────────────────────────────────
