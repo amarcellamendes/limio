@@ -336,6 +336,35 @@ async def proxy_test():
             "motivo": "WEBSHARE_API_KEY não configurado ou vazio",
         }
 
+    # 4. Playwright + proxy (testa se o Chromium consegue usar o proxy)
+    if proxy_url and await _playwright_ok():
+        try:
+            from playwright.async_api import async_playwright
+            parsed = _parse_proxy(proxy_url)
+            launch_kw: dict = {
+                "headless": True,
+                "args": list(_CHROMIUM_ARGS_SEM_PROXY_FLAG),
+                "env": _env_sem_proxy(),
+                "proxy": parsed,
+            }
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_kw)
+                ctx = await browser.new_context(ignore_https_errors=True, user_agent=_UA)
+                page = await ctx.new_page()
+                try:
+                    await page.goto("https://ipv4.webshare.io/", timeout=20_000)
+                    ip_text = (await page.text_content("body") or "").strip()
+                    result["ip_via_proxy_playwright"] = ip_text[:50]
+                except Exception as e:
+                    result["ip_via_proxy_playwright"] = f"ERRO: {e!s:.300}"
+                finally:
+                    await ctx.close()
+                    await browser.close()
+        except Exception as e:
+            result["ip_via_proxy_playwright"] = f"ERRO (launch): {e!s:.300}"
+    else:
+        result["ip_via_proxy_playwright"] = "pulado (proxy não configurado ou playwright indisponível)"
+
     return result
 
 
