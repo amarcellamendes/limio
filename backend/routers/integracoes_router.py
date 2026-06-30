@@ -583,6 +583,20 @@ async def _extrair_site_key_recaptcha(page) -> str | None:
     return None
 
 
+def _parse_proxy(proxy_url: str) -> dict:
+    """Converte URL de proxy (com credenciais embutidas) para dict do Playwright.
+    Ex: http://user:pass@host:port → {"server": "http://host:port", "username": ..., "password": ...}
+    """
+    import urllib.parse
+    p = urllib.parse.urlparse(proxy_url)
+    proxy: dict = {"server": f"{p.scheme}://{p.hostname}:{p.port}"}
+    if p.username:
+        proxy["username"] = p.username
+    if p.password:
+        proxy["password"] = p.password
+    return proxy
+
+
 def _env_sem_proxy() -> dict:
     """Retorna cópia do ambiente do processo sem variáveis de proxy SOCKS/HTTP.
     Passada ao Chromium via `env=` para que o processo filho não herde o proxy
@@ -748,12 +762,11 @@ async def _run_playwright_multi(
     try:
         base_args = _CHROMIUM_ARGS_SEM_PROXY_FLAG if proxy_url else _CHROMIUM_ARGS
         args = list(base_args) + (extra_chromium_args or [])
+        launch_kw: dict = {"headless": True, "args": args, "env": _env_sem_proxy()}
+        if proxy_url:
+            launch_kw["proxy"] = _parse_proxy(proxy_url)
         async with async_playwright() as pw:
-            browser = await pw.chromium.launch(
-                headless=True,
-                args=args,
-                env=_env_sem_proxy(),
-            )
+            browser = await pw.chromium.launch(**launch_kw)
             ctx_kwargs: dict = dict(
                 client_certificates=[
                     {"origin": o, "certPath": cert_path, "keyPath": key_path}
@@ -762,8 +775,6 @@ async def _run_playwright_multi(
                 ignore_https_errors=True,
                 user_agent=_UA,
             )
-            if proxy_url:
-                ctx_kwargs["proxy"] = {"server": proxy_url}
             context = await browser.new_context(**ctx_kwargs)
             page = await context.new_page()
             try:
@@ -845,18 +856,15 @@ async def _run_playwright_ecac_nss(
         else:
             args = [a for a in _CHROMIUM_ARGS if "proxy" not in a.lower()]
 
+        launch_kw: dict = {"headless": True, "args": args, "env": env}
+        if proxy_url:
+            launch_kw["proxy"] = _parse_proxy(proxy_url)
         async with async_playwright() as pw:
-            browser = await pw.chromium.launch(
-                headless=True,
-                args=args,
-                env=env,
-            )
+            browser = await pw.chromium.launch(**launch_kw)
             ctx_kwargs: dict = dict(
                 ignore_https_errors=True,
                 user_agent=_UA,
             )
-            if proxy_url:
-                ctx_kwargs["proxy"] = {"server": proxy_url}
             context = await browser.new_context(**ctx_kwargs)
             page = await context.new_page()
             try:
