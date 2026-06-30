@@ -279,6 +279,66 @@ async def diagnostico_rede():
     return resultados
 
 
+@router.get("/proxy-test")
+async def proxy_test():
+    """Diagnóstico completo do proxy: testa httpx sem proxy, httpx com proxy,
+    e inspeciona ProxyManager. Não requer autenticação — só para diagnóstico.
+    """
+    import httpx as _hx
+    from ..config import settings as _cfg
+
+    proxy_url = os.environ.get("PROXY_RESIDENCIAL_URL") or _cfg.PROXY_RESIDENCIAL_URL or ""
+    result: dict = {
+        "proxy_residencial_url_configurado": bool(proxy_url),
+        "proxy_residencial_prefix": (proxy_url[:30] + "...") if proxy_url else "VAZIO",
+    }
+
+    # 1. IP de saída do Railway sem proxy
+    try:
+        async with _hx.AsyncClient(timeout=10, verify=False) as c:
+            r = await c.get("https://ipv4.webshare.io/")
+            result["ip_railway_direto"] = r.text.strip()
+    except Exception as e:
+        result["ip_railway_direto"] = f"ERRO: {e!s:.200}"
+
+    # 2. IP de saída com proxy via httpx
+    if proxy_url:
+        try:
+            async with _hx.AsyncClient(proxy=proxy_url, timeout=15, verify=False) as c:
+                r = await c.get("https://ipv4.webshare.io/")
+                result["ip_via_proxy_httpx"] = r.text.strip()
+        except Exception as e:
+            result["ip_via_proxy_httpx"] = f"ERRO: {e!s:.200}"
+    else:
+        result["ip_via_proxy_httpx"] = "PROXY_RESIDENCIAL_URL não configurado"
+
+    # 3. ProxyManager
+    manager = get_proxy_manager()
+    if manager:
+        pm_proxy = await manager.get_proxy(prefer_brazil=True)
+        stats = manager.stats()
+        result["proxy_manager"] = {
+            "inicializado": True,
+            "total_proxies": len(stats),
+            "proxy_selecionado_prefix": (pm_proxy[:30] + "...") if pm_proxy else "NENHUM",
+        }
+        # Testa o proxy do manager via httpx
+        if pm_proxy:
+            try:
+                async with _hx.AsyncClient(proxy=pm_proxy, timeout=15, verify=False) as c:
+                    r = await c.get("https://ipv4.webshare.io/")
+                    result["ip_via_proxy_manager_httpx"] = r.text.strip()
+            except Exception as e:
+                result["ip_via_proxy_manager_httpx"] = f"ERRO: {e!s:.200}"
+    else:
+        result["proxy_manager"] = {
+            "inicializado": False,
+            "motivo": "WEBSHARE_API_KEY não configurado ou vazio",
+        }
+
+    return result
+
+
 @router.get("/proxy-stats")
 async def proxy_stats(
     escritorio: Escritorio = Depends(get_escritorio_atual),
