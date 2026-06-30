@@ -389,33 +389,39 @@ async def proxy_test():
     except Exception as e:
         result["esocial_direto_httpx"] = f"ERRO: {e!s:.300}"
 
-    # 7. Acesso DIRETO a empregador.esocial.gov.br via Playwright (sem proxy)
-    # Chromium sem proxy explícito e sem env vars de proxy → usa NAT direto do Railway
-    if await _playwright_ok():
+    # 7. Resolve empregador.esocial.gov.br via DoH (Cloudflare) — contorna DNS do Railway
+    ip_esocial = await _resolver_doh("empregador.esocial.gov.br")
+    result["esocial_ip_via_doh"] = ip_esocial or "NÃO RESOLVIDO"
+
+    # 8. Acesso DIRETO a empregador.esocial.gov.br via Playwright com --host-resolver-rules
+    # (injeta o IP resolvido via DoH, sem proxy — testa se a rede do Railway alcança o gov.br)
+    if ip_esocial and await _playwright_ok():
         try:
             from playwright.async_api import async_playwright
-            # Usa _CHROMIUM_ARGS (inclui --no-proxy-server) para forçar conexão direta
-            launch_kw_direto: dict = {
+            args_doh = list(_CHROMIUM_ARGS) + [
+                f"--host-resolver-rules=MAP empregador.esocial.gov.br {ip_esocial}"
+            ]
+            launch_kw_doh: dict = {
                 "headless": True,
-                "args": list(_CHROMIUM_ARGS),
+                "args": args_doh,
                 "env": _env_sem_proxy(),
             }
             async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_kw_direto)
+                browser = await pw.chromium.launch(**launch_kw_doh)
                 ctx = await browser.new_context(ignore_https_errors=True, user_agent=_UA)
                 page = await ctx.new_page()
                 try:
                     resp = await page.goto("https://empregador.esocial.gov.br/", timeout=20_000)
-                    result["esocial_direto_playwright"] = f"status={resp.status if resp else '??'}"
+                    result["esocial_doh_playwright"] = f"status={resp.status if resp else '??'}"
                 except Exception as e:
-                    result["esocial_direto_playwright"] = f"ERRO: {e!s:.300}"
+                    result["esocial_doh_playwright"] = f"ERRO: {e!s:.300}"
                 finally:
                     await ctx.close()
                     await browser.close()
         except Exception as e:
-            result["esocial_direto_playwright"] = f"ERRO (launch): {e!s:.300}"
+            result["esocial_doh_playwright"] = f"ERRO (launch): {e!s:.300}"
     else:
-        result["esocial_direto_playwright"] = "playwright indisponível"
+        result["esocial_doh_playwright"] = "pulado (sem IP DoH ou playwright indisponível)"
 
     return result
 
