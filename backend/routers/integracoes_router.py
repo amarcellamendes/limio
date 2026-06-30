@@ -879,6 +879,25 @@ async def _run_playwright_multi(
                 pass
 
 
+async def _pem_para_pfx_tmp(cert_pem: bytes, key_pem: bytes) -> str:
+    """Converte PEM cert+key para arquivo PFX temporário sem senha.
+    Necessário porque client_certificates do Playwright bypassa proxy;
+    com NSS o Chromium carrega o cert sem bypass.
+    """
+    from cryptography import x509 as _cx509
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key, NoEncryption
+    from cryptography.hazmat.primitives.serialization.pkcs12 import serialize_key_and_certificates
+    cert = _cx509.load_pem_x509_certificate(cert_pem)
+    key = load_pem_private_key(key_pem, password=None)
+    pfx = serialize_key_and_certificates(
+        name=b"cert", key=key, cert=cert, cas=None,
+        encryption_algorithm=NoEncryption(),
+    )
+    with tempfile.NamedTemporaryFile(suffix=".pfx", delete=False) as f:
+        f.write(pfx)
+        return f.name
+
+
 async def _importar_cert_pfx_nss_em(pfx_path: str, senha: str, tmp_home: str) -> tuple[bool, str]:
     """Importa PFX num banco NSS isolado em tmp_home/.pki/nssdb.
     Retorna (sucesso, nickname). Requer libnss3-tools na imagem.
@@ -996,18 +1015,19 @@ async def _run_ecac_com_proxy(
                 proxies_tentados.add(proxy_url)
 
         t0 = _time.monotonic()
+        tmp_pfx: str | None = None
         try:
             if pfx_path and pfx_senha is not None:
+                # Já tem PFX — usa NSS diretamente
                 resultado = await _run_playwright_ecac_nss(
                     pfx_path, pfx_senha, tarefa_fn, proxy_url=proxy_url,
                 )
             else:
-                resultado = await _run_playwright_multi(
-                    cert_pem, key_pem,
-                    origins or [],
-                    tarefa_fn,
-                    extra_chromium_args=extra_chromium_args,
-                    proxy_url=proxy_url,
+                # client_certificates do Playwright bypassa proxy (bug de design do Playwright)
+                # → converte PEM→PFX e usa NSS para que o Chromium carregue o cert sem bypass
+                tmp_pfx = await _pem_para_pfx_tmp(cert_pem, key_pem)
+                resultado = await _run_playwright_ecac_nss(
+                    tmp_pfx, "", tarefa_fn, proxy_url=proxy_url,
                 )
             elapsed_ms = (_time.monotonic() - t0) * 1000
             if proxy_url and manager:
@@ -1019,25 +1039,18 @@ async def _run_ecac_com_proxy(
                 manager.record_failure(proxy_url)
             err_str = str(e).lower()
             is_last = tentativa == max_tentativas - 1
-            # Erro SOCKS: proxy configurado como http:// mas é servidor SOCKS5 — pula direto ao fallback
-            if "socks" in err_str:
-                break
             if is_last:
-                break  # sai do loop para tentar sem proxy abaixo
-            # Só retenta com proxy diferente em erros de rede/proxy
-            if not any(k in err_str for k in ("net::", "connection", "proxy", "timeout")):
                 raise
+            # Retenta apenas em erros de rede/proxy; outros erros propagam imediatamente
+            if not any(k in err_str for k in ("net::", "connection", "proxy", "timeout", "socks")):
+                raise
+        finally:
+            if tmp_pfx:
+                try: os.unlink(tmp_pfx)
+                except Exception: pass
 
-    # Fallback final sem proxy — caso todos os proxies falhem (SOCKS bloqueado, IP inválido etc.)
-    if pfx_path and pfx_senha is not None:
-        return await _run_playwright_ecac_nss(pfx_path, pfx_senha, tarefa_fn, proxy_url=None)
-    return await _run_playwright_multi(
-        cert_pem, key_pem,
-        origins or [],
-        tarefa_fn,
-        extra_chromium_args=extra_chromium_args,
-        proxy_url=None,
-    )
+    # Não deve chegar aqui — o raise no is_last já propaga
+    raise RuntimeError("Todas as tentativas de conexão falharam.")
 
 
 async def _run_playwright_no_cert(tarefa_fn, proxy_url: str | None = None) -> dict:
