@@ -1003,16 +1003,14 @@ async def _run_ecac_com_proxy(
     import time as _time
 
     manager = get_proxy_manager()
-    proxies_tentados: set[str] = set()
 
     for tentativa in range(max_tentativas):
         proxy_url: str | None = None
         if manager:
+            # Reusa o proxy do manager mesmo se repetido entre tentativas — com pool
+            # pequeno (às vezes 1 único proxy) cair para conexão direta (sem proxy)
+            # garante falha de DNS no Railway para domínios gov.br (ERR_NAME_NOT_RESOLVED).
             proxy_url = await manager.get_proxy(prefer_brazil=prefer_brazil)
-            if proxy_url in proxies_tentados:
-                proxy_url = None
-            if proxy_url:
-                proxies_tentados.add(proxy_url)
 
         t0 = _time.monotonic()
         tmp_pfx: str | None = None
