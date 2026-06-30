@@ -365,6 +365,50 @@ async def proxy_test():
     else:
         result["ip_via_proxy_playwright"] = "pulado (proxy não configurado ou playwright indisponível)"
 
+    # 5. Acesso real a empregador.esocial.gov.br via proxy (httpx) — isola se o
+    # bloqueio é do gov.br recusando o IP do proxy, ou específico do Chromium.
+    pm_proxy_esocial = None
+    if manager:
+        pm_proxy_esocial = await manager.get_proxy(prefer_brazil=True)
+    proxy_para_esocial = pm_proxy_esocial or proxy_url
+    if proxy_para_esocial:
+        try:
+            async with _hx.AsyncClient(proxy=proxy_para_esocial, timeout=15, verify=False) as c:
+                r = await c.get("https://empregador.esocial.gov.br/")
+                result["esocial_via_proxy_httpx"] = f"status={r.status_code}"
+        except Exception as e:
+            result["esocial_via_proxy_httpx"] = f"ERRO: {e!s:.300}"
+    else:
+        result["esocial_via_proxy_httpx"] = "nenhum proxy disponível"
+
+    # 6. Acesso real a empregador.esocial.gov.br via proxy (Playwright, sem cert)
+    if proxy_para_esocial and await _playwright_ok():
+        try:
+            from playwright.async_api import async_playwright
+            parsed = _parse_proxy(proxy_para_esocial)
+            launch_kw2: dict = {
+                "headless": True,
+                "args": list(_CHROMIUM_ARGS_SEM_PROXY_FLAG),
+                "env": _env_sem_proxy(),
+                "proxy": parsed,
+            }
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(**launch_kw2)
+                ctx = await browser.new_context(ignore_https_errors=True, user_agent=_UA)
+                page = await ctx.new_page()
+                try:
+                    resp = await page.goto("https://empregador.esocial.gov.br/", timeout=20_000)
+                    result["esocial_via_proxy_playwright"] = f"status={resp.status if resp else '??'}"
+                except Exception as e:
+                    result["esocial_via_proxy_playwright"] = f"ERRO: {e!s:.300}"
+                finally:
+                    await ctx.close()
+                    await browser.close()
+        except Exception as e:
+            result["esocial_via_proxy_playwright"] = f"ERRO (launch): {e!s:.300}"
+    else:
+        result["esocial_via_proxy_playwright"] = "pulado"
+
     return result
 
 
