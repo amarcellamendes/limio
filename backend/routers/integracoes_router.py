@@ -1793,7 +1793,6 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
             "Se ainda não foi fechado, lance manualmente no campo de folha."
         )
     )
-    _diag_ultimo_esocial.clear()
     _diag_ultimo_esocial.update({
         "url_pos_login": _url_pos_login,
         "titulo_pos_login": _titulo_pos_login,
