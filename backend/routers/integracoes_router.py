@@ -365,63 +365,58 @@ async def proxy_test():
     else:
         result["ip_via_proxy_playwright"] = "pulado (proxy não configurado ou playwright indisponível)"
 
-    # 5. Acesso real a empregador.esocial.gov.br via proxy (httpx)
+    # 5. empregador.esocial.gov.br não existe mais em DNS (domínio desativado pelo SERPRO).
+    # Testa os domínios corretos: login.esocial.gov.br e acesso.gov.br
     pm_proxy_esocial = None
     if manager:
         pm_proxy_esocial = await manager.get_proxy(prefer_brazil=True)
     proxy_para_esocial = pm_proxy_esocial or proxy_url
-    if proxy_para_esocial:
+
+    for alvo_url, alvo_chave in [
+        ("https://login.esocial.gov.br/login.aspx", "login_esocial"),
+        ("https://sso.acesso.gov.br/", "sso_acesso_gov"),
+    ]:
+        # 5a. Direto via httpx
         try:
-            async with _hx.AsyncClient(proxy=proxy_para_esocial, timeout=15, verify=False) as c:
-                r = await c.get("https://empregador.esocial.gov.br/")
-                result["esocial_via_proxy_httpx"] = f"status={r.status_code}"
+            async with _hx.AsyncClient(timeout=12, verify=False) as c:
+                r = await c.get(alvo_url)
+                result[f"{alvo_chave}_direto_httpx"] = f"status={r.status_code}"
         except Exception as e:
-            result["esocial_via_proxy_httpx"] = f"ERRO: {e!s:.300}"
-    else:
-        result["esocial_via_proxy_httpx"] = "nenhum proxy disponível"
+            result[f"{alvo_chave}_direto_httpx"] = f"ERRO: {e!s:.200}"
+        # 5b. Via proxy
+        if proxy_para_esocial:
+            try:
+                async with _hx.AsyncClient(proxy=proxy_para_esocial, timeout=12, verify=False) as c:
+                    r = await c.get(alvo_url)
+                    result[f"{alvo_chave}_proxy_httpx"] = f"status={r.status_code}"
+            except Exception as e:
+                result[f"{alvo_chave}_proxy_httpx"] = f"ERRO: {e!s:.200}"
 
-    # 6. Acesso DIRETO a empregador.esocial.gov.br via httpx (sem proxy) — testa
-    # se Railway consegue alcançar o gov.br diretamente pela rede Python
-    try:
-        async with _hx.AsyncClient(timeout=15, verify=False) as c:
-            r = await c.get("https://empregador.esocial.gov.br/")
-            result["esocial_direto_httpx"] = f"status={r.status_code}"
-    except Exception as e:
-        result["esocial_direto_httpx"] = f"ERRO: {e!s:.300}"
-
-    # 7. Resolve empregador.esocial.gov.br via DoH (Cloudflare) — contorna DNS do Railway
-    ip_esocial = await _resolver_doh("empregador.esocial.gov.br")
-    result["esocial_ip_via_doh"] = ip_esocial or "NÃO RESOLVIDO"
-
-    # 8. Acesso DIRETO a empregador.esocial.gov.br via Playwright com --host-resolver-rules
-    # (injeta o IP resolvido via DoH, sem proxy — testa se a rede do Railway alcança o gov.br)
-    if ip_esocial and await _playwright_ok():
+    # 6. Playwright direto (sem proxy) para login.esocial.gov.br
+    if await _playwright_ok():
         try:
             from playwright.async_api import async_playwright
-            args_doh = list(_CHROMIUM_ARGS) + [
-                f"--host-resolver-rules=MAP empregador.esocial.gov.br {ip_esocial}"
-            ]
-            launch_kw_doh: dict = {
+            launch_kw_direto: dict = {
                 "headless": True,
-                "args": args_doh,
+                "args": list(_CHROMIUM_ARGS),
                 "env": _env_sem_proxy(),
             }
             async with async_playwright() as pw:
-                browser = await pw.chromium.launch(**launch_kw_doh)
+                browser = await pw.chromium.launch(**launch_kw_direto)
                 ctx = await browser.new_context(ignore_https_errors=True, user_agent=_UA)
                 page = await ctx.new_page()
                 try:
-                    resp = await page.goto("https://empregador.esocial.gov.br/", timeout=20_000)
-                    result["esocial_doh_playwright"] = f"status={resp.status if resp else '??'}"
+                    resp = await page.goto("https://login.esocial.gov.br/login.aspx", timeout=20_000)
+                    result["login_esocial_direto_playwright"] = f"status={resp.status if resp else '??'}"
                 except Exception as e:
-                    result["esocial_doh_playwright"] = f"ERRO: {e!s:.300}"
+                    result["login_esocial_direto_playwright"] = f"ERRO: {e!s:.300}"
                 finally:
                     await ctx.close()
                     await browser.close()
         except Exception as e:
-            result["esocial_doh_playwright"] = f"ERRO (launch): {e!s:.300}"
+            result["login_esocial_direto_playwright"] = f"ERRO (launch): {e!s:.300}"
     else:
-        result["esocial_doh_playwright"] = "pulado (sem IP DoH ou playwright indisponível)"
+        result["login_esocial_direto_playwright"] = "playwright indisponível"
 
     return result
 
