@@ -1649,6 +1649,11 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
             except Exception:
                 pass
 
+    # ── Diagnóstico: captura URL e título pós-login para ajudar a mapear portal ─
+    _url_pos_login = page.url
+    _titulo_pos_login = await page.title()
+    _html_snippet = (await page.content())[:3000]
+
     # ── Navega para Folha de Pagamento → Totalizadores → Empregador ──────────
     # Tenta navegação via menu
     for step_seq in [
@@ -1732,7 +1737,15 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
             "Se ainda não foi fechado, lance manualmente no campo de folha."
         )
     )
-    return {"folhas": folhas, "aviso": aviso}
+    return {
+        "folhas": folhas,
+        "aviso": aviso,
+        "_diag": {
+            "url_pos_login": _url_pos_login,
+            "titulo_pos_login": _titulo_pos_login,
+            "html_snippet": _html_snippet,
+        },
+    }
 
 
 async def _tentar_api_esocial(page, context, cnpj: str, ano: int) -> list:
