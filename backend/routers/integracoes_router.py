@@ -1545,6 +1545,7 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
     Fluxo: login.esocial.gov.br → gov.br SSO → certificado digital (NSS) → portal.
     Quando usar_procuracao=True: troca perfil para o CNPJ do cliente após login.
     """
+    _diag_ultimo_esocial["versao_codigo"] = "v0d8e667-cert-endpoint"
     from datetime import date as _dt_date
     cnpj_limpo = re.sub(r"\D", "", cnpj)
     cnpj_fmt = f"{cnpj_limpo[:2]}.{cnpj_limpo[2:5]}.{cnpj_limpo[5:8]}/{cnpj_limpo[8:12]}-{cnpj_limpo[12:]}"
