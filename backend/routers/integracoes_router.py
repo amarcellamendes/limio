@@ -1543,6 +1543,16 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
     mes_ant = _hoje.month - 1 if _hoje.month > 1 else 12
     ano_ant = _hoje.year if _hoje.month > 1 else _hoje.year - 1
 
+    # Últimos 12 meses (mais recente primeiro) — pode cruzar ano
+    _ultimos_12: list[tuple[int, int]] = []
+    _m, _a = mes_ant, ano_ant
+    for _ in range(12):
+        _ultimos_12.append((_m, _a))
+        _m -= 1
+        if _m < 1:
+            _m = 12
+            _a -= 1
+
     # ── Passo 1: página de login do eSocial ──────────────────────────────────
     # empregador.esocial.gov.br foi desativado pelo SERPRO em 2024/2025.
     # O acesso agora é via login.esocial.gov.br → gov.br SSO.
@@ -1662,27 +1672,30 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
         except Exception:
             pass
 
-    # ── Seleciona o mês anterior no calendário ────────────────────────────────
+    # ── Tenta cada um dos últimos 12 meses no calendário ─────────────────────
     if not folhas:
         nomes_mes = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"]
-        nome_mes = nomes_mes[mes_ant - 1]
-        for sel in [
-            f"a:has-text('{nome_mes}')", f"button:has-text('{nome_mes}')",
-            f"td:has-text('{nome_mes}')", f"[data-mes='{mes_ant}']",
-            f"a:has-text('{mes_ant:02d}/{ano_ant}')", f"a:has-text('{mes_ant:02d}/{ano}')",
-        ]:
-            try:
-                el = page.locator(sel).first
-                if await el.count() > 0:
-                    await el.click()
-                    await page.wait_for_load_state("domcontentloaded", timeout=15000)
-                    await page.wait_for_timeout(2000)
-                    html = await page.content()
-                    folhas = _parse_esocial_lxml(html, ano)
-                    if folhas:
-                        break
-            except Exception:
-                pass
+        for _m_cal, _a_cal in _ultimos_12:
+            nome_mes = nomes_mes[_m_cal - 1]
+            for sel in [
+                f"a:has-text('{nome_mes}')", f"button:has-text('{nome_mes}')",
+                f"td:has-text('{nome_mes}')", f"[data-mes='{_m_cal}']",
+                f"a:has-text('{_m_cal:02d}/{_a_cal}')",
+            ]:
+                try:
+                    el = page.locator(sel).first
+                    if await el.count() > 0:
+                        await el.click()
+                        await page.wait_for_load_state("domcontentloaded", timeout=12000)
+                        await page.wait_for_timeout(1500)
+                        html = await page.content()
+                        folhas = _parse_esocial_lxml(html, _a_cal)
+                        if folhas:
+                            break
+                except Exception:
+                    pass
+            if folhas:
+                break
 
     # ── Tenta Totalizadores → Contribuição Previdenciária via submenu ─────────
     if not folhas:
@@ -1709,12 +1722,12 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
             pass
 
     modo = "procuração" if usar_procuracao else "certificado do cliente"
+    _periodo = f"{_ultimos_12[-1][0]:02d}/{_ultimos_12[-1][1]} a {_ultimos_12[0][0]:02d}/{_ultimos_12[0][1]}"
     aviso = (
-        f"eSocial ({modo}): {len(folhas)} competência(s) de folha importada(s). "
-        f"Último mês buscado: {mes_ant:02d}/{ano_ant}."
+        f"eSocial ({modo}): {len(folhas)} competência(s) importada(s) ({_periodo})."
         if folhas
         else (
-            f"eSocial ({modo}) acessado. Nenhuma folha de {mes_ant:02d}/{ano_ant} encontrada. "
+            f"eSocial ({modo}) acessado. Nenhuma folha encontrada nos últimos 12 meses ({_periodo}). "
             "Os totalizadores (S-5011) dependem do fechamento mensal (S-1299). "
             "Se ainda não foi fechado, lance manualmente no campo de folha."
         )
@@ -1724,18 +1737,27 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
 
 async def _tentar_api_esocial(page, context, cnpj: str, ano: int) -> list:
     """Tenta buscar totalizadores via API REST do eSocial (se autenticado via cookie).
-    Itera do mês anterior ao atual para trás (busca o mais recente primeiro).
+    Busca os últimos 12 meses a partir do mês anterior ao atual, cruzando anos.
     """
     folhas = []
     cnpj_limpo = re.sub(r"\D", "", cnpj)
     from datetime import date as _dt_date
     _hoje = _dt_date.today()
-    mes_inicio = _hoje.month - 1 if _hoje.year == ano else 12
-    if mes_inicio < 1:
-        mes_inicio = 12
-    for mes in range(mes_inicio, 0, -1):
-        comp = f"{ano}{mes:02d}"
-        comp_key = f"{ano}-{mes:02d}"
+
+    # Gera lista dos últimos 12 meses (mais recente primeiro, cruza ano)
+    ultimos_12: list[tuple[int, int]] = []
+    _m = _hoje.month - 1 if _hoje.month > 1 else 12
+    _a = _hoje.year if _hoje.month > 1 else _hoje.year - 1
+    for _ in range(12):
+        ultimos_12.append((_m, _a))
+        _m -= 1
+        if _m < 1:
+            _m = 12
+            _a -= 1
+
+    for mes, _ano_mes in ultimos_12:
+        comp = f"{_ano_mes}{mes:02d}"
+        comp_key = f"{_ano_mes}-{mes:02d}"
         api_urls = [
             f"https://apies.esocial.gov.br/api/consulta/totalizadores/folha?competencia={comp}&cnpj={cnpj_limpo}",
             f"https://portal.esocial.gov.br/api/totalizadores?competencia={comp}",
