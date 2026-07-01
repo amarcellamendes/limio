@@ -421,6 +421,16 @@ async def proxy_test():
     return result
 
 
+# Armazena diagnóstico da última execução eSocial para inspeção sem autenticação
+_diag_ultimo_esocial: dict = {}
+
+
+@router.get("/esocial-diag-ultimo")
+async def esocial_diag_ultimo():
+    """Retorna diagnóstico da última execução buscar-esocial (sem autenticação — só para debug)."""
+    return _diag_ultimo_esocial
+
+
 @router.get("/proxy-stats")
 async def proxy_stats(
     escritorio: Escritorio = Depends(get_escritorio_atual),
@@ -1737,15 +1747,15 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
             "Se ainda não foi fechado, lance manualmente no campo de folha."
         )
     )
-    return {
-        "folhas": folhas,
+    _diag_ultimo_esocial.clear()
+    _diag_ultimo_esocial.update({
+        "url_pos_login": _url_pos_login,
+        "titulo_pos_login": _titulo_pos_login,
+        "html_snippet": _html_snippet,
+        "folhas_encontradas": len(folhas),
         "aviso": aviso,
-        "_diag": {
-            "url_pos_login": _url_pos_login,
-            "titulo_pos_login": _titulo_pos_login,
-            "html_snippet": _html_snippet,
-        },
-    }
+    })
+    return {"folhas": folhas, "aviso": aviso}
 
 
 async def _tentar_api_esocial(page, context, cnpj: str, ano: int) -> list:
