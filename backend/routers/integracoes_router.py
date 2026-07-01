@@ -1590,73 +1590,63 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
         except Exception:
             pass
 
-    # ── Passo 3: na página do acesso.gov.br, clica em "Seu certificado digital" ─
+    # ── Passo 3: navega para endpoint de autenticação por certificado ────────────
     # Aguarda redirecionamento para sso.acesso.gov.br
     for _ in range(30):
         if "acesso.gov.br" in page.url or "sso.acesso" in page.url:
             break
         await page.wait_for_timeout(500)
 
-    # Aguarda JS da página carregar (o botão fica em "loading" enquanto detecta cert)
-    await page.wait_for_timeout(5000)
-
-    # Inspeciona o botão antes de clicar — captura HTML, href e classe
-    _btn_info = {}
-    try:
-        _btn_info = await page.evaluate("""
-            () => {
-                const btn = document.querySelector('#login-certificate');
-                if (!btn) return {found: false};
-                return {
-                    found: true,
-                    classes: btn.className,
-                    href: btn.dataset.href || btn.getAttribute('href') || null,
-                    action: btn.getAttribute('data-action') || btn.getAttribute('onclick') || null,
-                    outerHTML: btn.outerHTML.slice(0, 600),
-                };
-            }
-        """)
-    except Exception:
-        pass
-    _diag_ultimo_esocial["btn_login_certificate"] = _btn_info
-
-    # Clica via JavaScript — bypassa estado "loading" e interceptações do Playwright
-    clicou = False
-    try:
-        clicou = await page.evaluate("""
-            () => {
-                const btn = document.querySelector('#login-certificate');
-                if (btn) { btn.click(); return true; }
-                return false;
-            }
-        """)
-    except Exception:
-        pass
-
-    if not clicou:
-        for sel in ["#login-certificate", "button:has-text('certificado')"]:
-            try:
-                el = page.locator(sel).first
-                if await el.count() > 0:
-                    await el.click(force=True)
-                    clicou = True
-                    break
-            except Exception:
-                pass
-
-    await page.wait_for_timeout(5000)
-
-    # Diagnóstico: captura estado logo após o clique
-    _diag_ultimo_esocial["url_apos_click_cert"] = page.url
-    _diag_ultimo_esocial["titulo_apos_click_cert"] = await page.title()
-    _diag_ultimo_esocial["clicou_cert"] = clicou
-
-    # Aguarda possível redirect para acesso.gov.br/cert ou de volta ao eSocial
-    try:
-        await page.wait_for_load_state("domcontentloaded", timeout=20000)
-    except Exception:
-        pass
+    # Aguarda JS da página carregar (~3s suficientes)
     await page.wait_for_timeout(3000)
+
+    # Extrai a URL do endpoint de certificado do atributo action do formulário.
+    # O JS da página mantém o botão em "loading" quando não detecta cert local
+    # (headless), então o onclick bloqueia a navegação. Navegamos diretamente.
+    _cert_endpoint: str | None = None
+    try:
+        _cert_endpoint = await page.evaluate("""
+            () => {
+                const form = document.getElementById('loginData');
+                return form ? form.action : null;
+            }
+        """)
+    except Exception:
+        pass
+    _diag_ultimo_esocial["cert_endpoint"] = _cert_endpoint
+
+    # Estratégia 1: remove classe "loading" do botão e dispara click via JS
+    _clicou_btn = False
+    try:
+        _clicou_btn = await page.evaluate("""
+            () => {
+                const btn = document.querySelector('#login-certificate');
+                if (!btn) return false;
+                btn.classList.remove('loading');
+                btn.click();
+                return true;
+            }
+        """)
+    except Exception:
+        pass
+
+    await page.wait_for_timeout(3000)
+
+    # Estratégia 2: se ainda na página de login, navega diretamente para o
+    # endpoint certificado.sso.acesso.gov.br — dispara o handshake TLS com
+    # CertificateRequest e o Chromium apresenta o cert do NSS automaticamente.
+    _url_apos_click = page.url
+    if "acesso.gov.br" in _url_apos_click and _cert_endpoint and "certificado" in _cert_endpoint:
+        try:
+            await page.goto(_cert_endpoint, wait_until="domcontentloaded", timeout=60000)
+        except Exception as e:
+            _diag_ultimo_esocial["cert_goto_error"] = str(e)
+        await page.wait_for_timeout(5000)
+
+    _diag_ultimo_esocial["url_apos_cert"] = page.url
+    _diag_ultimo_esocial["titulo_apos_cert"] = await page.title()
+    _diag_ultimo_esocial["cert_endpoint_usado"] = _cert_endpoint
+    _diag_ultimo_esocial["clicou_btn"] = _clicou_btn
 
     # ── Passo 4: aguarda retorno ao eSocial após autenticação ────────────────
     for _ in range(30):
