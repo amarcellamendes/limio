@@ -1597,28 +1597,66 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
             break
         await page.wait_for_timeout(500)
 
-    # Aguarda o botão sair do estado "loading" antes de clicar
+    # Aguarda JS da página carregar (o botão fica em "loading" enquanto detecta cert)
+    await page.wait_for_timeout(5000)
+
+    # Inspeciona o botão antes de clicar — captura HTML, href e classe
+    _btn_info = {}
     try:
-        await page.wait_for_selector("#login-certificate:not(.loading)", timeout=15000)
+        _btn_info = await page.evaluate("""
+            () => {
+                const btn = document.querySelector('#login-certificate');
+                if (!btn) return {found: false};
+                return {
+                    found: true,
+                    classes: btn.className,
+                    href: btn.dataset.href || btn.getAttribute('href') || null,
+                    action: btn.getAttribute('data-action') || btn.getAttribute('onclick') || null,
+                    outerHTML: btn.outerHTML.slice(0, 600),
+                };
+            }
+        """)
+    except Exception:
+        pass
+    _diag_ultimo_esocial["btn_login_certificate"] = _btn_info
+
+    # Clica via JavaScript — bypassa estado "loading" e interceptações do Playwright
+    clicou = False
+    try:
+        clicou = await page.evaluate("""
+            () => {
+                const btn = document.querySelector('#login-certificate');
+                if (btn) { btn.click(); return true; }
+                return false;
+            }
+        """)
     except Exception:
         pass
 
-    for sel in [
-        "#login-certificate",
-        "button#login-certificate",
-        "button:has-text('Seu certificado digital')",
-        "button:has-text('certificado digital')",
-        "button:has-text('Certificado')",
-    ]:
-        try:
-            el = page.locator(sel).first
-            if await el.count() > 0:
-                await el.click()
-                await page.wait_for_load_state("domcontentloaded", timeout=30000)
-                await page.wait_for_timeout(3000)
-                break
-        except Exception:
-            pass
+    if not clicou:
+        for sel in ["#login-certificate", "button:has-text('certificado')"]:
+            try:
+                el = page.locator(sel).first
+                if await el.count() > 0:
+                    await el.click(force=True)
+                    clicou = True
+                    break
+            except Exception:
+                pass
+
+    await page.wait_for_timeout(5000)
+
+    # Diagnóstico: captura estado logo após o clique
+    _diag_ultimo_esocial["url_apos_click_cert"] = page.url
+    _diag_ultimo_esocial["titulo_apos_click_cert"] = await page.title()
+    _diag_ultimo_esocial["clicou_cert"] = clicou
+
+    # Aguarda possível redirect para acesso.gov.br/cert ou de volta ao eSocial
+    try:
+        await page.wait_for_load_state("domcontentloaded", timeout=20000)
+    except Exception:
+        pass
+    await page.wait_for_timeout(3000)
 
     # ── Passo 4: aguarda retorno ao eSocial após autenticação ────────────────
     for _ in range(30):
