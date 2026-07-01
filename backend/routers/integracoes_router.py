@@ -227,7 +227,7 @@ async def buscar_lote(
 
                 try:
                     res = await _run_playwright(cert_pem, key_pem,
-                        "https://empregador.esocial.gov.br",
+                        "https://login.esocial.gov.br",
                         lambda p, c: _tarefa_esocial(p, c, cliente.cnpj, ano))
                     for f in res.get("folhas", []):
                         await _upsert_folha(db, escritorio.id, cliente.id,
@@ -259,7 +259,7 @@ async def diagnostico_rede():
     import httpx as _hx
     urls = [
         "https://cav.receita.fazenda.gov.br/autenticacao/login",
-        "https://empregador.esocial.gov.br/",
+        "https://login.esocial.gov.br/login.aspx",
         "https://www.esocial.gov.br/",
         "https://www.tst.jus.br/certidao",
         "https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf",
@@ -779,9 +779,9 @@ _ECAC_ORIGINS = [
     "https://www.acesso.gov.br",
 ]
 _ESOCIAL_ORIGINS = [
-    "https://empregador.esocial.gov.br",
-    "https://www.esocial.gov.br",
     "https://login.esocial.gov.br",
+    "https://www.esocial.gov.br",
+    "https://portal.esocial.gov.br",
     "https://acesso.gov.br",
     "https://sso.acesso.gov.br",
     "https://login.acesso.gov.br",
@@ -1532,7 +1532,8 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
 async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: bool = False) -> dict:
     """
     Navega no portal do eSocial e extrai totais de folha (Totalizadores → Empregador).
-    Quando usar_procuracao=True: usa cert do escritório + troca perfil para o cliente.
+    Fluxo: login.esocial.gov.br → gov.br SSO → certificado digital (NSS) → portal.
+    Quando usar_procuracao=True: troca perfil para o CNPJ do cliente após login.
     """
     from datetime import date as _dt_date
     cnpj_limpo = re.sub(r"\D", "", cnpj)
@@ -1542,39 +1543,50 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
     mes_ant = _hoje.month - 1 if _hoje.month > 1 else 12
     ano_ant = _hoje.year if _hoje.month > 1 else _hoje.year - 1
 
-    # ── Login ─────────────────────────────────────────────────────────────────
-    # empregador.esocial.gov.br: DNS do Railway não resolve, mas o buscar_esocial
-    # passa --host-resolver-rules com IP resolvido via DoH (Cloudflare).
-    # Se o IP não foi resolvido, cai para www como fallback.
+    # ── Passo 1: página de login do eSocial ──────────────────────────────────
+    # empregador.esocial.gov.br foi desativado pelo SERPRO em 2024/2025.
+    # O acesso agora é via login.esocial.gov.br → gov.br SSO.
     await page.goto(
-        "https://empregador.esocial.gov.br/",
+        "https://login.esocial.gov.br/login.aspx",
         wait_until="domcontentloaded", timeout=_ESOCIAL_TIMEOUT,
     )
-    await page.wait_for_timeout(4000)
+    await page.wait_for_timeout(2000)
 
-    # Se empregador falhou (DNS), tenta www como fallback
-    if "empregador" not in page.url and "esocial" in page.url:
-        pass  # www já está carregado
-    elif "error" in (await page.title()).lower() or len(await page.content()) < 500:
-        await page.goto("https://www.esocial.gov.br/portal/", wait_until="domcontentloaded", timeout=_ESOCIAL_TIMEOUT)
-        await page.wait_for_timeout(3000)
-
-    # Tenta navegar para a área do empregador se estiver na www
-    for sel in ["a:has-text('Empregador')", "a[href*='empregador']", "a[href*='Empregador']",
-                "a:has-text('Acessar')", "button:has-text('Acessar')"]:
+    # ── Passo 2: clica em "Entrar com gov.br" ────────────────────────────────
+    for sel in [
+        "button.sign-in",
+        "button:has-text('gov.br')",
+        "button:has-text('Entrar com')",
+        "a:has-text('gov.br')",
+        ".br-button.sign-in",
+    ]:
         try:
             el = page.locator(sel).first
             if await el.count() > 0:
                 await el.click()
-                await page.wait_for_load_state("domcontentloaded", timeout=20000)
+                await page.wait_for_load_state("domcontentloaded", timeout=30000)
                 await page.wait_for_timeout(2000)
                 break
         except Exception:
             pass
-    # Clica em Certificado Digital para autenticar
-    for sel in ["a:has-text('Certificado Digital')", "button:has-text('Certificado')",
-                "input[value*='ertificado']", ".certificado",
-                "a:has-text('certificado')", "button:has-text('certificado digital')"]:
+
+    # ── Passo 3: na página do acesso.gov.br, seleciona Certificado Digital ───
+    # Aguarda redirecionamento para sso.acesso.gov.br
+    for _ in range(20):
+        if "acesso.gov.br" in page.url or "sso.acesso" in page.url:
+            break
+        await page.wait_for_timeout(500)
+
+    for sel in [
+        "a:has-text('Certificado Digital')",
+        "button:has-text('Certificado Digital')",
+        "a:has-text('certificado')",
+        "[data-testid='certificado-digital']",
+        "a[href*='cert']",
+        ".certificado-digital",
+        "#certificado",
+        "a:has-text('Certificado')",
+    ]:
         try:
             el = page.locator(sel).first
             if await el.count() > 0:
@@ -1584,6 +1596,16 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
                 break
         except Exception:
             pass
+
+    # ── Passo 4: aguarda retorno ao eSocial após autenticação ────────────────
+    for _ in range(30):
+        url = page.url
+        if "esocial.gov.br" in url and "login.aspx" not in url and "acesso.gov.br" not in url:
+            break
+        if "login.esocial.gov.br/LoginGovBR" in url or "portal.esocial" in url:
+            break
+        await page.wait_for_timeout(1000)
+    await page.wait_for_timeout(3000)
 
     # ── Troca perfil para o cliente (procuração) ──────────────────────────────
     if usar_procuracao:
@@ -1716,7 +1738,7 @@ async def _tentar_api_esocial(page, context, cnpj: str, ano: int) -> list:
         comp_key = f"{ano}-{mes:02d}"
         api_urls = [
             f"https://apies.esocial.gov.br/api/consulta/totalizadores/folha?competencia={comp}&cnpj={cnpj_limpo}",
-            f"https://empregador.esocial.gov.br/api/totalizadores?competencia={comp}",
+            f"https://portal.esocial.gov.br/api/totalizadores?competencia={comp}",
         ]
         for api_url in api_urls:
             try:
