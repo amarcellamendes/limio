@@ -1659,10 +1659,24 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
             except Exception:
                 pass
 
-    # ── Diagnóstico: captura URL e título pós-login para ajudar a mapear portal ─
+    # ── Diagnóstico: captura URL, título e elementos da página atual ─────────
     _url_pos_login = page.url
     _titulo_pos_login = await page.title()
-    _html_snippet = (await page.content())[:3000]
+    _html_completo = await page.content()
+    _html_snippet = _html_completo[:8000]
+    # Captura todos os links e botões visíveis para mapear seletores
+    _elementos = await page.evaluate("""
+        () => {
+            const els = [...document.querySelectorAll('a, button, input[type=submit], input[type=button]')];
+            return els.map(e => ({
+                tag: e.tagName,
+                text: (e.innerText || e.value || e.title || '').trim().slice(0, 80),
+                href: e.href || '',
+                id: e.id || '',
+                cls: e.className || ''
+            })).filter(e => e.text || e.href);
+        }
+    """)
 
     # ── Navega para Folha de Pagamento → Totalizadores → Empregador ──────────
     # Tenta navegação via menu
@@ -1752,6 +1766,7 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
         "url_pos_login": _url_pos_login,
         "titulo_pos_login": _titulo_pos_login,
         "html_snippet": _html_snippet,
+        "elementos_pagina": _elementos,
         "folhas_encontradas": len(folhas),
         "aviso": aviso,
     })
