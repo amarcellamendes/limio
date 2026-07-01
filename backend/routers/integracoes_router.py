@@ -1590,22 +1590,25 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
         except Exception:
             pass
 
-    # ── Passo 3: na página do acesso.gov.br, seleciona Certificado Digital ───
+    # ── Passo 3: na página do acesso.gov.br, clica em "Seu certificado digital" ─
     # Aguarda redirecionamento para sso.acesso.gov.br
-    for _ in range(20):
+    for _ in range(30):
         if "acesso.gov.br" in page.url or "sso.acesso" in page.url:
             break
         await page.wait_for_timeout(500)
 
+    # Aguarda o botão sair do estado "loading" antes de clicar
+    try:
+        await page.wait_for_selector("#login-certificate:not(.loading)", timeout=15000)
+    except Exception:
+        pass
+
     for sel in [
-        "a:has-text('Certificado Digital')",
-        "button:has-text('Certificado Digital')",
-        "a:has-text('certificado')",
-        "[data-testid='certificado-digital']",
-        "a[href*='cert']",
-        ".certificado-digital",
-        "#certificado",
-        "a:has-text('Certificado')",
+        "#login-certificate",
+        "button#login-certificate",
+        "button:has-text('Seu certificado digital')",
+        "button:has-text('certificado digital')",
+        "button:has-text('Certificado')",
     ]:
         try:
             el = page.locator(sel).first
