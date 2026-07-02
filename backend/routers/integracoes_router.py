@@ -968,6 +968,7 @@ async def _httpx_cert_auth(
     Contorna limitação do Chromium headless que não auto-seleciona cert do NSS.
     Retorna {'url': <url após redirect>, 'status': ..., 'cookies': {...}}.
     """
+    import httpx
     import tempfile, os as _os
 
     tmp_cert = tmp_key = None
