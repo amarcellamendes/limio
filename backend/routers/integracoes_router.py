@@ -993,7 +993,7 @@ async def _httpx_cert_auth(
             "timeout": 30.0,
         }
         if proxy_url:
-            kw["proxies"] = {"https://": proxy_url, "http://": proxy_url}
+            kw["proxy"] = proxy_url
 
         async with httpx.AsyncClient(**kw) as client:
             resp = await client.get(cert_url)
