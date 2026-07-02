@@ -118,20 +118,37 @@ async def buscar_esocial(
 
     # Tenta certificado de procuração do escritório
     usar_procuracao = bool(getattr(escritorio, "cert_procuracao_path", None))
+    pfx_path_proc: str | None = None
+    pfx_senha_proc: str = ""
+    cert_pem: bytes
+    key_pem: bytes
+
     if usar_procuracao:
+        pfx_path_proc = getattr(escritorio, "cert_procuracao_path", None)
+        pfx_senha_proc = getattr(escritorio, "cert_procuracao_senha", None) or ""
+        if pfx_path_proc and not os.path.exists(pfx_path_proc):
+            pfx_path_proc = None
         try:
             cert_pem, key_pem = await _cert_escritorio_ou_erro(escritorio)
         except HTTPException:
             usar_procuracao = False
+            pfx_path_proc = None
 
     if not usar_procuracao:
         cert_pem, key_pem = await _cert_ou_erro(cliente, senha)
 
     try:
         # Usa _run_ecac_com_proxy (pool rotativo Webshare + retry) igual ao PGDAS.
-        # O IP estático de PROXY_RESIDENCIAL_URL é frequentemente bloqueado pelo eSocial.
+        # Para procuração: passa pfx_path original para preservar a cadeia CA completa
+        # no banco NSS. cert_pem/key_pem vão na lambda para _httpx_cert_auth (primário).
+        _tarefa_fn = lambda p, c: _tarefa_esocial(
+            p, c, cliente.cnpj, ano, usar_procuracao,
+            cert_pem=cert_pem, key_pem=key_pem,
+        )
         resultado = await _run_ecac_com_proxy(
-            tarefa_fn=lambda p, c: _tarefa_esocial(p, c, cliente.cnpj, ano, usar_procuracao),
+            tarefa_fn=_tarefa_fn,
+            pfx_path=pfx_path_proc,
+            pfx_senha=pfx_senha_proc if pfx_path_proc else None,
             cert_pem=cert_pem,
             key_pem=key_pem,
             origins=_ESOCIAL_ORIGINS,
@@ -942,6 +959,61 @@ async def _run_playwright_multi(
                 pass
 
 
+async def _httpx_cert_auth(
+    cert_pem: bytes,
+    key_pem: bytes,
+    cert_url: str,
+) -> dict:
+    """Faz handshake TLS com certificado cliente via httpx/ssl nativo do Python.
+    Contorna limitação do Chromium headless que não auto-seleciona cert do NSS.
+    Retorna {'url': <url após redirect>, 'status': ..., 'cookies': {...}}.
+    """
+    import tempfile, os as _os
+
+    tmp_cert = tmp_key = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as f:
+            f.write(cert_pem)
+            tmp_cert = f.name
+        with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as f:
+            f.write(key_pem)
+            tmp_key = f.name
+
+        # Obtém proxy do ProxyManager para rotear pelo IP brasileiro
+        proxy_url = None
+        _mgr = get_proxy_manager()
+        if _mgr:
+            proxy_url = await _mgr.get_proxy(prefer_brazil=True)
+
+        kw: dict = {
+            "cert": (tmp_cert, tmp_key),
+            "verify": False,        # cadeias ICP-Brasil não estão no bundle padrão
+            "follow_redirects": False,  # pega só o 1º redirect; Playwright faz o resto
+            "timeout": 30.0,
+        }
+        if proxy_url:
+            kw["proxies"] = {"https://": proxy_url, "http://": proxy_url}
+
+        async with httpx.AsyncClient(**kw) as client:
+            resp = await client.get(cert_url)
+            location = resp.headers.get("location") or str(resp.url)
+            return {
+                "url": location,
+                "status": resp.status_code,
+                "cookies": {k: v for k, v in resp.cookies.items()},
+                "ok": resp.status_code in (200, 301, 302, 303, 307, 308),
+            }
+    except Exception as exc:
+        return {"url": "", "status": 0, "cookies": {}, "ok": False, "error": str(exc)}
+    finally:
+        for p in (tmp_cert, tmp_key):
+            if p:
+                try:
+                    _os.unlink(p)
+                except Exception:
+                    pass
+
+
 async def _pem_para_pfx_tmp(cert_pem: bytes, key_pem: bytes) -> str:
     """Converte PEM cert+key para arquivo PFX temporário sem senha.
     Necessário porque client_certificates do Playwright bypassa proxy;
@@ -1010,7 +1082,9 @@ async def _run_playwright_ecac_nss(
 
     tmp_home = tempfile.mkdtemp(prefix="ecac_nss_")
     try:
-        ok, _ = await _importar_cert_pfx_nss_em(pfx_path, pfx_senha, tmp_home)
+        ok, nick = await _importar_cert_pfx_nss_em(pfx_path, pfx_senha, tmp_home)
+        _diag_ultimo_esocial["nss_import_ok"] = ok
+        _diag_ultimo_esocial["nss_nick"] = nick
         if not ok:
             raise RuntimeError(
                 "Falha ao importar certificado no banco NSS. "
@@ -1539,13 +1613,23 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
 
 # ─── Tarefa eSocial ──────────────────────────────────────────────────────────
 
-async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: bool = False) -> dict:
+async def _tarefa_esocial(
+    page,
+    context,
+    cnpj: str,
+    ano: int,
+    usar_procuracao: bool = False,
+    cert_pem: bytes | None = None,
+    key_pem: bytes | None = None,
+) -> dict:
     """
     Navega no portal do eSocial e extrai totais de folha (Totalizadores → Empregador).
-    Fluxo: login.esocial.gov.br → gov.br SSO → certificado digital (NSS) → portal.
+    Fluxo: login.esocial.gov.br → gov.br SSO → certificado digital → portal.
+    Passo 3 usa httpx (TLS nativo Python) para o handshake do certificado, que é mais
+    confiável que Chromium headless + NSS. O redirect_url é passado ao Playwright.
     Quando usar_procuracao=True: troca perfil para o CNPJ do cliente após login.
     """
-    _diag_ultimo_esocial["versao_codigo"] = "v0d8e667-cert-endpoint"
+    _diag_ultimo_esocial["versao_codigo"] = "v-httpx-cert-auth"
     from datetime import date as _dt_date
     cnpj_limpo = re.sub(r"\D", "", cnpj)
     cnpj_fmt = f"{cnpj_limpo[:2]}.{cnpj_limpo[2:5]}.{cnpj_limpo[5:8]}/{cnpj_limpo[8:12]}-{cnpj_limpo[12:]}"
@@ -1591,7 +1675,7 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
         except Exception:
             pass
 
-    # ── Passo 3: navega para endpoint de autenticação por certificado ────────────
+    # ── Passo 3: autenticação por certificado via httpx (TLS nativo Python) ─────
     # Aguarda redirecionamento para sso.acesso.gov.br
     for _ in range(30):
         if "acesso.gov.br" in page.url or "sso.acesso" in page.url:
@@ -1602,24 +1686,51 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
     await page.wait_for_timeout(3000)
 
     # O JS da página detecta "sem certificado local" e muda form.action de
-    # certificado.sso.acesso.gov.br → sso.acesso.gov.br. Por isso NÃO usamos
-    # form.action: construímos a URL do endpoint TLS direto da URL atual da
-    # página, que já tem o authorization_id correto, trocando apenas o subdomínio.
-    _url_sso = page.url  # ex: https://sso.acesso.gov.br/login?client_id=...&authorization_id=...
+    # certificado.sso.acesso.gov.br → sso.acesso.gov.br. Construímos a URL
+    # do endpoint TLS a partir da URL atual, trocando apenas o subdomínio.
+    _url_sso = page.url  # https://sso.acesso.gov.br/login?client_id=...&authorization_id=...
     _cert_endpoint = _url_sso.replace(
         "https://sso.acesso.gov.br/", "https://certificado.sso.acesso.gov.br/"
     )
     _diag_ultimo_esocial["cert_endpoint"] = _cert_endpoint
     _diag_ultimo_esocial["url_sso_base"] = _url_sso
 
-    # Navega diretamente para certificado.sso.acesso.gov.br — o servidor envia
-    # TLS CertificateRequest; Chromium responde com o cert do banco NSS (~/.pki/nssdb).
-    try:
-        await page.goto(_cert_endpoint, wait_until="domcontentloaded", timeout=60000)
-    except Exception as e:
-        _diag_ultimo_esocial["cert_goto_error"] = str(e)
-    await page.wait_for_timeout(5000)
+    # Abordagem primária: httpx com TLS nativo do Python — evita a limitação do
+    # Chromium headless que não auto-seleciona certificado do banco NSS.
+    _httpx_ok = False
+    if cert_pem and key_pem and _cert_endpoint != _url_sso:
+        try:
+            _auth_result = await _httpx_cert_auth(cert_pem, key_pem, _cert_endpoint)
+            _diag_ultimo_esocial["httpx_auth"] = _auth_result
+            if _auth_result.get("ok") and _auth_result.get("url"):
+                # O redirect_url já tem o token/código de autorização — passa ao Playwright
+                _redirect_url = _auth_result["url"]
+                # Injeta também os cookies retornados (ex: sessão gov.br)
+                if _auth_result.get("cookies"):
+                    for _ck_name, _ck_val in _auth_result["cookies"].items():
+                        try:
+                            await context.add_cookies([{
+                                "name": _ck_name, "value": _ck_val,
+                                "domain": ".acesso.gov.br", "path": "/",
+                            }])
+                        except Exception:
+                            pass
+                try:
+                    await page.goto(_redirect_url, wait_until="domcontentloaded", timeout=60000)
+                    _httpx_ok = True
+                except Exception as _ge:
+                    _diag_ultimo_esocial["httpx_goto_error"] = str(_ge)
+        except Exception as _hx_err:
+            _diag_ultimo_esocial["httpx_error"] = str(_hx_err)
 
+    # Fallback: Playwright navega diretamente ao endpoint TLS (usa NSS se disponível)
+    if not _httpx_ok:
+        try:
+            await page.goto(_cert_endpoint, wait_until="domcontentloaded", timeout=60000)
+        except Exception as e:
+            _diag_ultimo_esocial["cert_goto_error"] = str(e)
+
+    await page.wait_for_timeout(5000)
     _diag_ultimo_esocial["url_apos_cert"] = page.url
     _diag_ultimo_esocial["titulo_apos_cert"] = await page.title()
 
