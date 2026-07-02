@@ -622,7 +622,11 @@ async def _cert_escritorio_ou_erro(escritorio) -> tuple[bytes, bytes]:
         with open(path, "rb") as f:
             pfx = f.read()
         p12 = load_pkcs12(pfx, senha.encode() if senha else b"")
+        # Inclui cadeia CA (intermediários ICP-Brasil) no cert_pem — sem isso o
+        # servidor gov.br retorna HTTP 400 rejeitando o certificado incompleto.
         cert_pem = p12.cert.certificate.public_bytes(Encoding.PEM)
+        for _ca in (p12.additional_certs or []):
+            cert_pem += _ca.certificate.public_bytes(Encoding.PEM)
         key_pem = p12.key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
         return cert_pem, key_pem
     except Exception as e:
@@ -646,6 +650,8 @@ async def _carregar_certificado(cliente: Cliente, tipo: str, senha_override: str
             pfx = f.read()
         p12 = load_pkcs12(pfx, senha.encode() if senha else b"")
         cert_pem = p12.cert.certificate.public_bytes(Encoding.PEM)
+        for _ca in (p12.additional_certs or []):
+            cert_pem += _ca.certificate.public_bytes(Encoding.PEM)
         key_pem = p12.key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
         return cert_pem, key_pem, None
     except Exception as e:
