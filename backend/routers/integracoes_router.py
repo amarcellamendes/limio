@@ -1601,53 +1601,27 @@ async def _tarefa_esocial(page, context, cnpj: str, ano: int, usar_procuracao: b
     # Aguarda JS da página carregar (~3s suficientes)
     await page.wait_for_timeout(3000)
 
-    # Extrai a URL do endpoint de certificado do atributo action do formulário.
-    # O JS da página mantém o botão em "loading" quando não detecta cert local
-    # (headless), então o onclick bloqueia a navegação. Navegamos diretamente.
-    _cert_endpoint: str | None = None
-    try:
-        _cert_endpoint = await page.evaluate("""
-            () => {
-                const form = document.getElementById('loginData');
-                return form ? form.action : null;
-            }
-        """)
-    except Exception:
-        pass
+    # O JS da página detecta "sem certificado local" e muda form.action de
+    # certificado.sso.acesso.gov.br → sso.acesso.gov.br. Por isso NÃO usamos
+    # form.action: construímos a URL do endpoint TLS direto da URL atual da
+    # página, que já tem o authorization_id correto, trocando apenas o subdomínio.
+    _url_sso = page.url  # ex: https://sso.acesso.gov.br/login?client_id=...&authorization_id=...
+    _cert_endpoint = _url_sso.replace(
+        "https://sso.acesso.gov.br/", "https://certificado.sso.acesso.gov.br/"
+    )
     _diag_ultimo_esocial["cert_endpoint"] = _cert_endpoint
+    _diag_ultimo_esocial["url_sso_base"] = _url_sso
 
-    # Estratégia 1: remove classe "loading" do botão e dispara click via JS
-    _clicou_btn = False
+    # Navega diretamente para certificado.sso.acesso.gov.br — o servidor envia
+    # TLS CertificateRequest; Chromium responde com o cert do banco NSS (~/.pki/nssdb).
     try:
-        _clicou_btn = await page.evaluate("""
-            () => {
-                const btn = document.querySelector('#login-certificate');
-                if (!btn) return false;
-                btn.classList.remove('loading');
-                btn.click();
-                return true;
-            }
-        """)
-    except Exception:
-        pass
-
-    await page.wait_for_timeout(3000)
-
-    # Estratégia 2: se ainda na página de login, navega diretamente para o
-    # endpoint certificado.sso.acesso.gov.br — dispara o handshake TLS com
-    # CertificateRequest e o Chromium apresenta o cert do NSS automaticamente.
-    _url_apos_click = page.url
-    if "acesso.gov.br" in _url_apos_click and _cert_endpoint and "certificado" in _cert_endpoint:
-        try:
-            await page.goto(_cert_endpoint, wait_until="domcontentloaded", timeout=60000)
-        except Exception as e:
-            _diag_ultimo_esocial["cert_goto_error"] = str(e)
-        await page.wait_for_timeout(5000)
+        await page.goto(_cert_endpoint, wait_until="domcontentloaded", timeout=60000)
+    except Exception as e:
+        _diag_ultimo_esocial["cert_goto_error"] = str(e)
+    await page.wait_for_timeout(5000)
 
     _diag_ultimo_esocial["url_apos_cert"] = page.url
     _diag_ultimo_esocial["titulo_apos_cert"] = await page.title()
-    _diag_ultimo_esocial["cert_endpoint_usado"] = _cert_endpoint
-    _diag_ultimo_esocial["clicou_btn"] = _clicou_btn
 
     # ── Passo 4: aguarda retorno ao eSocial após autenticação ────────────────
     for _ in range(30):
