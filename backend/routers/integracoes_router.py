@@ -2727,7 +2727,7 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
         if not await _playwright_ok():
             return {"status": "em_analise", "observacao": f"Acesse manualmente: {url_manual}"}
 
-        async def _localizar_iframe_stm(page, timeout_ms: int = 30_000):
+        async def _localizar_iframe_stm(page, timeout_ms: int = 60_000):
             """Aguarda o iframe do formulário STM aparecer dentro da servicoJanela."""
             deadline = asyncio.get_event_loop().time() + timeout_ms / 1000
             while asyncio.get_event_loop().time() < deadline:
