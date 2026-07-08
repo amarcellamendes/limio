@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Limio — Redefinir senha (emergencial)</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: #013957; font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    padding: 24px;
+  }
+  .card {
+    background: #fff; border-radius: 16px; padding: 32px; width: 100%; max-width: 420px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.3);
+  }
+  h1 { font-size: 20px; color: #013957; margin: 0 0 4px; }
+  p.sub { color: #6b7280; font-size: 13px; margin: 0 0 24px; }
+  label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 6px; letter-spacing: .02em; }
+  input {
+    width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px;
+    font-size: 14px; margin-bottom: 16px;
+  }
+  input:focus { outline: none; border-color: #0891b2; box-shadow: 0 0 0 3px rgba(8,145,178,.15); }
+  button {
+    width: 100%; background: #0891b2; color: #fff; border: none; border-radius: 8px;
+    padding: 12px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button:hover { background: #067a94; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .msg { margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 13px; display: none; }
+  .msg.ok { background: #d1fae5; color: #065f46; display: block; }
+  .msg.erro { background: #fee2e2; color: #991b1b; display: block; }
+  .hint { font-size: 11px; color: #9ca3af; margin-top: -10px; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Redefinir senha (emergencial)</h1>
+    <p class="sub">Página temporária — use uma vez para recuperar o acesso e depois peça pra remover.</p>
+
+    <form id="form">
+      <label for="email">Seu e-mail de login</label>
+      <input type="email" id="email" required placeholder="voce@escritorio.com" />
+
+      <label for="senha">Nova senha</label>
+      <input type="password" id="senha" required placeholder="mínimo 6 caracteres" minlength="6" />
+
+      <label for="token">Chave secreta (SECRET_KEY)</label>
+      <input type="text" id="token" required placeholder="copie do Railway → Variables → SECRET_KEY" />
+      <p class="hint">No painel do Railway: seu serviço → aba Variables → clique em SECRET_KEY para copiar.</p>
+
+      <button type="submit" id="btn">Redefinir senha</button>
+    </form>
+
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <script>
+    const form = document.getElementById('form');
+    const btn = document.getElementById('btn');
+    const msg = document.getElementById('msg');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      msg.className = 'msg';
+      msg.textContent = '';
+      btn.disabled = true;
+      btn.textContent = 'Enviando...';
+
+      try {
+        const resp = await fetch('/api/auth/reset-senha-emergencial', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: document.getElementById('email').value.trim(),
+            nova_senha: document.getElementById('senha').value,
+            token: document.getElementById('token').value.trim(),
+          }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok) {
+          msg.className = 'msg ok';
+          msg.textContent = '✓ Senha atualizada! Volte para a tela de login e entre com a nova senha.';
+        } else {
+          msg.className = 'msg erro';
+          msg.textContent = '✗ ' + (data.detail || 'Erro ao redefinir a senha.');
+        }
+      } catch (err) {
+        msg.className = 'msg erro';
+        msg.textContent = '✗ Erro de conexão: ' + err.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Redefinir senha';
+      }
+    });
+  </script>
+</body>
+</html>

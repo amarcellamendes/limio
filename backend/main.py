@@ -60,6 +60,14 @@ if os.path.isdir(_frontend_dir):
     if os.path.isdir(_static_dir):
         app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
+    @app.get("/reset-emergencial", include_in_schema=False)
+    async def serve_reset_emergencial():
+        pagina = os.path.join(_frontend_dir, "reset-emergencial.html")
+        if os.path.isfile(pagina):
+            return FileResponse(pagina)
+        from fastapi import HTTPException
+        raise HTTPException(404)
+
     @app.get("/", include_in_schema=False)
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_frontend(full_path: str = ""):
