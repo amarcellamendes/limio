@@ -7,13 +7,16 @@ Origens suportadas:
 - nfeio: webhook/polling NFe.io (exige nfse_api_key + nfse_company_id configurados)
 """
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from typing import Optional, List
 from datetime import datetime
+import io
 import os
 import xml.etree.ElementTree as ET
+import zipfile
 import httpx
 
 from ..database import get_db
@@ -625,6 +628,56 @@ async def download_xml(
         content=doc.xml_content.encode("utf-8"),
         media_type="application/xml",
         headers={"Content-Disposition": f'attachment; filename="doc_{doc_id}.xml"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Download em lote (ZIP de XMLs)
+# ---------------------------------------------------------------------------
+
+class DownloadZipPayload(BaseModel):
+    ids: list[int]
+
+
+@router.post("/download-zip")
+async def download_zip(
+    payload: DownloadZipPayload,
+    db: AsyncSession = Depends(get_db),
+    escritorio: Escritorio = Depends(get_escritorio_atual),
+):
+    """Gera e baixa um ZIP com os XMLs dos documentos recebidos selecionados."""
+    if not payload.ids:
+        raise HTTPException(400, "Selecione ao menos um documento.")
+
+    result = await db.execute(
+        select(DocumentoRecebido).where(
+            DocumentoRecebido.escritorio_id == escritorio.id,
+            DocumentoRecebido.id.in_(payload.ids),
+        )
+    )
+    docs = result.scalars().all()
+
+    buf = io.BytesIO()
+    nomes_usados: set[str] = set()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for doc in docs:
+            if not doc.xml_content:
+                continue  # pula documentos sem XML disponível
+            tipo = doc.tipo.value if hasattr(doc.tipo, "value") else (doc.tipo or "doc")
+            nome = f"{tipo}_{doc.numero or doc.id}.xml"
+            if nome in nomes_usados:
+                nome = f"{tipo}_{doc.numero}_{doc.id}.xml"
+            nomes_usados.add(nome)
+            zf.writestr(nome, doc.xml_content)
+
+    buf.seek(0)
+    if not nomes_usados:
+        raise HTTPException(404, "Nenhum dos documentos selecionados possui XML disponível.")
+
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=notas_recebidas.zip"},
     )
 
 

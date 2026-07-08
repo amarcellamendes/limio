@@ -441,11 +441,20 @@ async def proxy_test():
 # Armazena diagnóstico da última execução eSocial para inspeção sem autenticação
 _diag_ultimo_esocial: dict = {}
 
+# Idem para PGDAS-D (mesmo padrão do eSocial) — ver _tarefa_pgdas.
+_diag_ultimo_pgdas: dict = {}
+
 
 @router.get("/esocial-diag-ultimo")
 async def esocial_diag_ultimo():
     """Retorna diagnóstico da última execução buscar-esocial (sem autenticação — só para debug)."""
     return _diag_ultimo_esocial
+
+
+@router.get("/pgdas-diag-ultimo")
+async def pgdas_diag_ultimo():
+    """Retorna diagnóstico da última execução buscar-pgdas (sem autenticação — só para debug)."""
+    return _diag_ultimo_pgdas
 
 
 @router.get("/proxy-stats")
@@ -1325,6 +1334,18 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
     if mes_inicio < 1:
         mes_inicio = 12
 
+    # Diagnóstico por etapa — mesmo padrão de _diag_ultimo_esocial, exposto sem
+    # autenticação em GET /api/integracoes/pgdas-diag-ultimo para depuração.
+    _diag_ultimo_pgdas.clear()
+    _diag_ultimo_pgdas.update({
+        "timestamp": datetime.utcnow().isoformat(),
+        "versao_codigo": "v-diag-por-etapa",
+        "modo": "procuração" if usar_procuracao else "certificado do cliente",
+        "cnpj": cnpj_limpo,
+        "ano": ano,
+        "etapa_atual": "iniciado",
+    })
+
     # ── Fluxo via procuração (cert do escritório, e-CAC) ──────────────────────
     if usar_procuracao:
         # 1. Acessa e-CAC — o cert é apresentado automaticamente pelo Playwright
@@ -1333,6 +1354,10 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
             wait_until="domcontentloaded", timeout=_PGDAS_TIMEOUT,
         )
         await page.wait_for_timeout(3000)
+        _diag_ultimo_pgdas["etapa_atual"] = "login_ecac_carregado"
+        _diag_ultimo_pgdas["url_login"] = page.url
+        _diag_ultimo_pgdas["titulo_login"] = await page.title()
+        _clicou_cert_digital = False
         for sel in ["a:has-text('Certificado Digital')", "button:has-text('Certificado Digital')",
                     "input[value*='ertificado']", "#btnCertificado",
                     "a:has-text('certificado')", "button:has-text('certificado')"]:
@@ -1342,9 +1367,11 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
                     await el.click()
                     await page.wait_for_load_state("domcontentloaded", timeout=20000)
                     await page.wait_for_timeout(3000)
+                    _clicou_cert_digital = True
                     break
             except Exception:
                 pass
+        _diag_ultimo_pgdas["clicou_cert_digital"] = _clicou_cert_digital
 
         # 2. Aguarda e trata o seletor de certificado do GOV.BR (acesso.gov.br/selecionar-certificado)
         # O NSS garante que o cert aparece na lista; aqui clicamos nele.
@@ -1354,8 +1381,10 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
 
             # Se chegou no seletor GOV.BR → seleciona o certificado
             if "acesso.gov.br" in url_atual or "selecionar-certificado" in url_atual:
+                _diag_ultimo_pgdas["etapa_atual"] = "chegou_seletor_certificado_govbr"
                 await page.wait_for_timeout(2000)
                 # Tenta clicar no primeiro certificado disponível na lista
+                _clicou_cert_lista = False
                 for sel in [
                     "ul.certificate-list li:first-child button",
                     ".certificate-item:first-child button",
@@ -1371,10 +1400,13 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
                         if await el.count() > 0:
                             await el.click()
                             await page.wait_for_timeout(1500)
+                            _clicou_cert_lista = True
                             break
                     except Exception:
                         pass
+                _diag_ultimo_pgdas["clicou_cert_lista_govbr"] = _clicou_cert_lista
                 # Confirma a seleção (botão Entrar / Selecionar / Confirmar)
+                _confirmou_selecao = False
                 for sel in [
                     "button:has-text('Entrar')", "button:has-text('Selecionar')",
                     "button:has-text('Confirmar')", "button.btn-primary",
@@ -1386,9 +1418,11 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
                             await el.click()
                             await page.wait_for_load_state("domcontentloaded", timeout=30000)
                             await page.wait_for_timeout(3000)
+                            _confirmou_selecao = True
                             break
                     except Exception:
                         pass
+                _diag_ultimo_pgdas["confirmou_selecao_cert"] = _confirmou_selecao
                 break  # sai do loop de tentativas — continua o fluxo
 
             # Se já está no e-CAC autenticado → segue
@@ -1405,8 +1439,11 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
         )
         await page.wait_for_timeout(3000)
         url_apos_ecac = page.url
+        _diag_ultimo_pgdas["url_apos_ecac"] = url_apos_ecac
         if "autenticacao" in url_apos_ecac.lower() or "login" in url_apos_ecac.lower():
             titulo_pg = await page.title()
+            _diag_ultimo_pgdas["etapa_atual"] = "falhou_autenticacao_ecac"
+            _diag_ultimo_pgdas["titulo_apos_ecac"] = titulo_pg
             return {
                 "receitas": [],
                 "aviso": (
@@ -1419,8 +1456,10 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
                     f"libnss3-tools não está instalado na imagem Railway."
                 ),
             }
+        _diag_ultimo_pgdas["etapa_atual"] = "autenticado_ecac"
 
         # 3. Clica em "Alterar perfil de acesso" para acessar como procurador do cliente
+        _clicou_alterar_perfil = False
         for sel in [
             "a:has-text('Alterar perfil')", "button:has-text('Alterar perfil')",
             "#lnkAlterarPerfil", "a:has-text('Trocar perfil')",
@@ -1432,11 +1471,14 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
                     await el.click()
                     await page.wait_for_load_state("domcontentloaded", timeout=15000)
                     await page.wait_for_timeout(2000)
+                    _clicou_alterar_perfil = True
                     break
             except Exception:
                 pass
+        _diag_ultimo_pgdas["clicou_alterar_perfil"] = _clicou_alterar_perfil
 
         # 4. Seleciona o cliente por CNPJ na lista de procurados
+        _selecionou_cliente = False
         for sel in [
             f"a:has-text('{cnpj_fmt}')", f"a:has-text('{cnpj_limpo[:14]}')",
             f"a:has-text('{cnpj_limpo[:8]}')", f"td:has-text('{cnpj_limpo}')",
@@ -1448,9 +1490,11 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
                     await el.click()
                     await page.wait_for_load_state("domcontentloaded", timeout=15000)
                     await page.wait_for_timeout(3000)
+                    _selecionou_cliente = True
                     break
             except Exception:
                 pass
+        _diag_ultimo_pgdas["selecionou_cliente_lista"] = _selecionou_cliente
 
         # 5. Navega para a página de PGDAS-D no e-CAC (URL exata que a usuária usa)
         await page.goto(
@@ -1458,6 +1502,9 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
             wait_until="domcontentloaded", timeout=_PGDAS_TIMEOUT,
         )
         await page.wait_for_timeout(4000)
+        _diag_ultimo_pgdas["etapa_atual"] = "chegou_pagina_pgdas"
+        _diag_ultimo_pgdas["url_pgdas"] = page.url
+        _diag_ultimo_pgdas["titulo_pgdas"] = await page.title()
 
         # 6. Se a página ainda mostra lista de clientes, seleciona o correto
         try:
@@ -1473,10 +1520,12 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
             pass
 
         html = await page.content()
+        _diag_ultimo_pgdas["html_snippet"] = html[:8000]
         # 5. Extrai o PA mais recente — a página do e-CAC mostra "PA MM/AAAA" como seções
         mes_ant_ref = mes_inicio
         ano_ref_loop = ano if _hoje.month > 1 else ano - 1
         receitas = _parse_pgdas_lxml(html, ano)
+        _diag_ultimo_pgdas["receitas_parse_direto"] = len(receitas)
 
         # 6. Tenta clicar na declaração do PA mais recente para obter RBT12
         if not receitas:
@@ -1522,6 +1571,9 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
                 "para este período e se a procuração está ativa."
             )
         )
+        _diag_ultimo_pgdas["etapa_atual"] = "concluido"
+        _diag_ultimo_pgdas["receitas_encontradas"] = len(receitas)
+        _diag_ultimo_pgdas["aviso"] = aviso
         return {"receitas": receitas, "aviso": aviso}
 
     # ── Fluxo direto com cert do próprio cliente (Simples Nacional) ───────────
@@ -1531,6 +1583,10 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
         wait_until="domcontentloaded", timeout=_PGDAS_TIMEOUT,
     )
     await page.wait_for_timeout(3000)
+    _diag_ultimo_pgdas["etapa_atual"] = "login_ecac_carregado"
+    _diag_ultimo_pgdas["url_login"] = page.url
+    _diag_ultimo_pgdas["titulo_login"] = await page.title()
+    _clicou_cert_digital_direto = False
     for sel in ["a:has-text('Certificado Digital')", "button:has-text('Certificado Digital')",
                 "input[value*='ertificado']", "#btnCertificado"]:
         try:
@@ -1539,9 +1595,11 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
                 await el.click()
                 await page.wait_for_load_state("domcontentloaded", timeout=15000)
                 await page.wait_for_timeout(2000)
+                _clicou_cert_digital_direto = True
                 break
         except Exception:
             pass
+    _diag_ultimo_pgdas["clicou_cert_digital"] = _clicou_cert_digital_direto
 
     # 2. Tenta URL direta do e-CAC para PGDAS-D
     await page.goto(
@@ -1549,8 +1607,13 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
         wait_until="domcontentloaded", timeout=_PGDAS_TIMEOUT,
     )
     await page.wait_for_timeout(3000)
+    _diag_ultimo_pgdas["etapa_atual"] = "chegou_pagina_pgdas"
+    _diag_ultimo_pgdas["url_pgdas"] = page.url
+    _diag_ultimo_pgdas["titulo_pgdas"] = await page.title()
     html = await page.content()
+    _diag_ultimo_pgdas["html_snippet"] = html[:8000]
     receitas = _parse_pgdas_lxml(html, ano)
+    _diag_ultimo_pgdas["receitas_parse_direto"] = len(receitas)
 
     # 3. Navega para Simples Nacional se necessário
     if not receitas:
@@ -1615,6 +1678,10 @@ async def _tarefa_pgdas(page, context, cnpj: str, ano: int, usar_procuracao: boo
             "para este período no portal do Simples Nacional."
         )
     )
+    _diag_ultimo_pgdas["etapa_atual"] = "concluido"
+    _diag_ultimo_pgdas["url_final"] = debug_url
+    _diag_ultimo_pgdas["receitas_encontradas"] = len(receitas)
+    _diag_ultimo_pgdas["aviso"] = aviso
     return {"receitas": receitas, "aviso": aviso}
 
 
@@ -2635,146 +2702,153 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
     # ── Manaus / SEMEF ────────────────────────────────────────────────────────
     if "manaus" in mun_key or uf.upper() == "AM":
         # Portal: semefatende.manaus.am.gov.br/servicoJanela.php?servico=1412
-        # O STM exige CAPTCHA — tenta via Playwright, mas se CAPTCHA bloquear,
-        # retorna link direto ao portal.
+        #
+        # Investigado ao vivo com Playwright (com JS) em 2026-07: a página em si é
+        # só um shell institucional (menu + chat "M.A.I.A." + widget Twitter) — o
+        # formulário de emissão de CND ("Localiza o Contribuinte") vem embutido num
+        # <iframe> apontando para
+        #   https://stm.manaus.am.gov.br/stm/servlet/hwtportalcontribuinte_emb?certidao-imobiliaria
+        # Esse é um webpanel GeneXus: radios (Matrícula IPTU / Inscrição Municipal /
+        # CNPJ / CPF, id=vTIPOFILTRO1-4), campo de número (#vNRFILTRO), CAPTCHA de
+        # imagem com palavra em inglês (#captchaImage img + input #_cfield) e botão
+        # "Consultar" (input[name=BTNCONSULTAR]) que dispara AJAX — a página não
+        # navega, o resultado é re-renderizado dentro do mesmo iframe.
+        #
+        # O código antigo operava direto no `page` de nível superior (que nunca tem
+        # o formulário — daí sempre cair em "pouco conteúdo (0 chars)"): o HTML da
+        # página-shell tem ~247 caracteres de texto visível, o formulário real está
+        # isolado dentro do iframe. O servlet `hwvdocumentos_v3` referenciado antes
+        # como alternativa foi testado e devolve uma página vazia/sem formulário —
+        # não é o endpoint correto, foi removido.
         url_manual = "https://semefatende.manaus.am.gov.br/servicoJanela.php?servico=1412"
-        stm_url = "https://stm.manaus.am.gov.br/stm/servlet/hwvdocumentos_v3"
+        _IFRAME_MARCADOR = "hwtportalcontribuinte_emb"
+        _MAX_TENTATIVAS_CAPTCHA = 2
 
         if not await _playwright_ok():
             return {"status": "em_analise", "observacao": f"Acesse manualmente: {url_manual}"}
 
+        async def _localizar_iframe_stm(page, timeout_ms: int = 30_000):
+            """Aguarda o iframe do formulário STM aparecer dentro da servicoJanela."""
+            deadline = asyncio.get_event_loop().time() + timeout_ms / 1000
+            while asyncio.get_event_loop().time() < deadline:
+                for fr in page.frames:
+                    if _IFRAME_MARCADOR in fr.url:
+                        return fr
+                await page.wait_for_timeout(500)
+            return None
+
+        async def _resolver_captcha_semef(frame) -> str | None:
+            """Tira screenshot do captcha de imagem do SEMEF/STM e resolve via 2captcha."""
+            img_sel = frame.locator(
+                '#captchaImage img, img[src*="Captcha" i], img[id*="captcha" i]'
+            ).first
+            if await img_sel.count() == 0:
+                return None
+            try:
+                img_bytes = await img_sel.screenshot()
+            except Exception:
+                return None
+            return await _resolver_captcha_imagem_2captcha(img_bytes)
+
         async def _tarefa_manaus(page):
-            # Tenta acesso direto ao servlet STM (pode funcionar sem CAPTCHA via POST)
             try:
                 # wait_until="commit" dispara ao primeiro byte — portal SEMEF é lento,
-                # não esperar networkidle que pode demorar 90s+. Espera fixa após commit.
+                # não esperar networkidle que pode demorar 90s+.
                 await page.goto(url_manual, wait_until="commit", timeout=90_000)
-                await page.wait_for_timeout(8_000)  # aguarda DOM ficar interativo
-                await page.wait_for_timeout(2000)
-                # Seleciona radio "CNPJ" se existir
-                for sel in ['input[value="CNPJ"]', 'input[type="radio"][value*="cnpj" i]',
+
+                frame = await _localizar_iframe_stm(page)
+                if frame is None:
+                    # Portal pode ter migrado de vez para o assistente virtual M.A.I.A.
+                    # (outro iframe visto na página) ou mudado de estrutura de novo.
+                    return {
+                        "status": "em_analise",
+                        "observacao": (
+                            "Não foi possível localizar o formulário de emissão de CND "
+                            "no portal da SEMEF (o iframe do sistema STM não carregou a "
+                            "tempo, ou o portal migrou para o assistente virtual M.A.I.A.). "
+                            f"Emita manualmente em: {url_manual} — busque 'Emissão de CND' "
+                            f"e informe o CNPJ {cnpj_digits}."
+                        ),
+                    }
+
+                # Seleciona radio "CNPJ" (id confirmado: vTIPOFILTRO3, value=4)
+                for sel in ['#vTIPOFILTRO3', 'input[name="vTIPOFILTRO"][value="4"]',
                             'label:has-text("CNPJ") input']:
                     try:
-                        el = page.locator(sel).first
+                        el = frame.locator(sel).first
                         if await el.count() > 0:
                             await el.click()
                             await page.wait_for_timeout(500)
                             break
                     except Exception:
                         pass
+
                 # Preenche o número do CNPJ
-                for sel in ['input[id*="numero" i]', 'input[name*="numero" i]',
-                            'input[id*="cnpj" i]', 'input[type="text"]']:
+                for sel in ['#vNRFILTRO', 'input[name="vNRFILTRO"]', 'input[type="text"]']:
                     try:
-                        el = page.locator(sel).first
+                        el = frame.locator(sel).first
                         if await el.count() > 0:
                             await el.fill(cnpj_digits)
                             break
                     except Exception:
                         pass
-                # Aguarda carregamento dinâmico do CAPTCHA
-                await page.wait_for_timeout(2500)
-                html_cap = await page.content()
-                if re.search(r'captcha|recaptcha|Recarregar|código de segurança|imgseg|gera_captcha|codigo_seguranca', html_cap, re.I):
-                    captcha_resolvido = False
+                await page.wait_for_timeout(500)
 
-                    # Tenta reCAPTCHA v2 via 2captcha
-                    if re.search(r'recaptcha|data-sitekey', html_cap, re.I):
-                        site_key = await _extrair_site_key_recaptcha(page)
-                        if site_key:
-                            token = await _resolver_recaptcha_2captcha(url_manual, site_key)
-                            if token:
-                                await page.evaluate(f"""
-                                    document.querySelectorAll('textarea[name="g-recaptcha-response"]').forEach(el => el.value = '{token}');
-                                """)
-                                captcha_resolvido = True
-
-                    # Tenta CAPTCHA de imagem via 2captcha (seletores ampliados para portais PHP gov)
-                    if not captcha_resolvido:
-                        img_sel = page.locator(
-                            'img[src*="captcha" i], img[id*="captcha" i], img[class*="captcha" i],'
-                            'img[src*="gera_captcha" i], img[src*="codigo" i], img[src*="segur" i],'
-                            'img[src*="imgseg" i], img[src*="verificacao" i], img[src*="verify" i],'
-                            'img[src*="imagem" i][src*=".php"], img[src*="captcha.php"]'
-                        ).first
-                        if await img_sel.count() > 0:
-                            try:
-                                img_bytes = await img_sel.screenshot()
-                                texto = await _resolver_captcha_imagem_2captcha(img_bytes)
-                                if texto:
-                                    # Seletores específicos do SEMEF/STM + genéricos gov.br
-                                    _CAPTCHA_INPUTS = [
-                                        'input[id*="captcha" i]', 'input[name*="captcha" i]',
-                                        'input[placeholder*="captcha" i]',
-                                        'input[name*="codigo" i]', 'input[id*="codigo" i]',
-                                        'input[name*="segur" i]', 'input[id*="segur" i]',
-                                        'input[name*="codigoSeg" i]', 'input[id*="codigoSeg" i]',
-                                        'input[name*="txtCaptcha" i]', 'input[id*="txtCaptcha" i]',
-                                        'input[name*="imgseg" i]', 'input[id*="imgseg" i]',
-                                        'input[placeholder*="ódigo" i]', 'input[placeholder*="egur" i]',
-                                    ]
-                                    for csel in _CAPTCHA_INPUTS:
-                                        el = page.locator(csel).first
-                                        if await el.count() > 0:
-                                            await el.fill(texto)
-                                            captcha_resolvido = True
-                                            break
-                                    # Fallback: preenche o input de texto mais próximo da imagem do captcha
-                                    if not captcha_resolvido:
-                                        try:
-                                            el = page.locator(f"input[type='text']:near(img[src*='captcha' i], img[src*='gera' i], img[src*='segur' i])").first
-                                            if await el.count() > 0:
-                                                await el.fill(texto)
-                                                captcha_resolvido = True
-                                        except Exception:
-                                            pass
-                                    # Último recurso: segundo input de texto na página (primeiro é o CNPJ)
-                                    if not captcha_resolvido:
-                                        try:
-                                            inputs = page.locator('input[type="text"]')
-                                            count = await inputs.count()
-                                            for i in range(1, count):  # pula o primeiro (CNPJ)
-                                                el = inputs.nth(i)
-                                                val = await el.get_attribute("value") or ""
-                                                if not val or not any(c.isdigit() for c in val):
-                                                    await el.fill(texto)
-                                                    captcha_resolvido = True
-                                                    break
-                                        except Exception:
-                                            pass
-                            except Exception:
-                                pass
-
-                    if not captcha_resolvido:
-                        import os as _os
-                        from ..config import settings as _cfg3
-                        _key = _os.environ.get("DOIS_CAPTCHA_KEY") or _cfg3.DOIS_CAPTCHA_KEY
-                        dica = (
-                            "Configure DOIS_CAPTCHA_KEY no Railway para resolver automaticamente."
-                            if not _key else
-                            "2captcha acionado mas não resolveu o CAPTCHA do SEMEF. Tente novamente."
-                        )
-                        return {
-                            "status": "em_analise",
-                            "observacao": (
-                                f"SEMEF Manaus exige CAPTCHA. {dica} "
-                                f"Acesse: {url_manual} — CNPJ: {cnpj_digits}"
-                            ),
-                        }
-                # Clica em Consultar
-                for sel in ['input[type="submit"]', 'button:has-text("Consultar")',
-                            'input[value*="Consultar" i]']:
+                captcha_resolvido = False
+                for tentativa in range(_MAX_TENTATIVAS_CAPTCHA):
+                    texto = await _resolver_captcha_semef(frame)
+                    if not texto:
+                        break
                     try:
-                        el = page.locator(sel).first
-                        if await el.count() > 0:
-                            await el.click()
-                            await page.wait_for_load_state("domcontentloaded", timeout=20_000)
-                            await page.wait_for_timeout(2000)
-                            break
+                        el = frame.locator('#_cfield, input[name="cfield"]').first
+                        await el.fill(texto)
+                        captcha_resolvido = True
                     except Exception:
                         pass
-                html = await page.content()
-                result = _parse_certidao_html(html, "cnd_municipal", page_url=page.url)
+                    if not captcha_resolvido:
+                        break
+
+                    # Clica em Consultar
+                    for sel in ['input[name="BTNCONSULTAR"]', 'input[value*="Consultar" i]',
+                                'button:has-text("Consultar")']:
+                        try:
+                            el = frame.locator(sel).first
+                            if await el.count() > 0:
+                                await el.click()
+                                break
+                        except Exception:
+                            pass
+                    await page.wait_for_timeout(4_000)
+
+                    html_apos = await frame.content()
+                    # CAPTCHA errado — GeneXus recarrega a imagem automaticamente;
+                    # tenta de novo (até _MAX_TENTATIVAS_CAPTCHA vezes).
+                    if re.search(r'código de segurança.{0,40}não confere', html_apos, re.I):
+                        captcha_resolvido = False
+                        await page.wait_for_timeout(1_500)
+                        continue
+                    break
+
+                if not captcha_resolvido:
+                    import os as _os
+                    from ..config import settings as _cfg3
+                    _key = _os.environ.get("DOIS_CAPTCHA_KEY") or _cfg3.DOIS_CAPTCHA_KEY
+                    dica = (
+                        "Configure DOIS_CAPTCHA_KEY no Railway para resolver automaticamente."
+                        if not _key else
+                        "2captcha acionado mas não resolveu o CAPTCHA do SEMEF após "
+                        f"{_MAX_TENTATIVAS_CAPTCHA} tentativa(s). Tente novamente."
+                    )
+                    return {
+                        "status": "em_analise",
+                        "observacao": (
+                            f"SEMEF Manaus exige código de segurança (CAPTCHA). {dica} "
+                            f"Acesse: {url_manual} — CNPJ: {cnpj_digits}"
+                        ),
+                    }
+
+                html = await frame.content()
+                result = _parse_certidao_html(html, "cnd_municipal", page_url=frame.url)
                 if result["status"] == "regular":
                     result = await _capturar_pdf_certidao(page, result)
                 if result["status"] == "em_analise":
@@ -2789,7 +2863,7 @@ async def _consultar_cnd_municipal(cnpj: str, municipio: str, uf: str) -> dict:
         # Tenta sem proxy primeiro — SEMEF é portal municipal, menos restritivo
         try:
             return await _run_playwright_no_cert(_tarefa_manaus, proxy_url=None)
-        except Exception as e_noproxy:
+        except Exception:
             # Fallback com proxy se falhar sem proxy
             try:
                 return await _run_playwright_no_cert(_tarefa_manaus)

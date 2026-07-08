@@ -114,6 +114,39 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
     )
 
 
+class ResetSenhaEmergencial(BaseModel):
+    email: str
+    nova_senha: str
+    token: str
+
+
+@router.post("/reset-senha-emergencial")
+async def reset_senha_emergencial(
+    payload: ResetSenhaEmergencial,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Endpoint TEMPORÁRIO de emergência — usado quando o usuário fica trancado fora
+    da conta e não há fluxo de "esqueci minha senha" nem acesso ao banco via CLI.
+    Protegido pelo SECRET_KEY do ambiente (só quem tem acesso às variáveis do
+    Railway consegue usar). REMOVER esta rota assim que o login for confirmado.
+    """
+    import hmac
+    from ..config import settings
+
+    if not hmac.compare_digest(payload.token, settings.SECRET_KEY):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Token inválido.")
+
+    result = await db.execute(select(Usuario).where(Usuario.email == payload.email))
+    usuario = result.scalar_one_or_none()
+    if not usuario:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Usuário não encontrado.")
+
+    usuario.senha_hash = hash_senha(payload.nova_senha)
+    await db.commit()
+    return {"ok": True, "mensagem": "Senha atualizada. Remova esta rota após confirmar o login."}
+
+
 @router.get("/me", response_model=EscritorioResponse)
 async def me(
     escritorio: Escritorio = Depends(get_escritorio_atual),
