@@ -182,11 +182,14 @@ async def buscar_faturamento_lp(
         raise HTTPException(503, "Módulo de automação não disponível.")
 
     try:
-        resultado = await _run_playwright_multi(
-            cert_pem, key_pem,
-            ["https://cav.receita.fazenda.gov.br", "https://sped.rfb.gov.br",
-             "https://www.receita.fazenda.gov.br"],
-            lambda p, c: _tarefa_efd_contribuicoes(p, c, cliente.cnpj, ano),
+        # Roteia pelo ProxyManager + NSS, igual ao PGDAS/eSocial — evita o bloqueio
+        # de IP datacenter do Railway que motivou a arquitetura de proxy residencial.
+        resultado = await _run_ecac_com_proxy(
+            tarefa_fn=lambda p, c: _tarefa_efd_contribuicoes(p, c, cliente.cnpj, ano),
+            cert_pem=cert_pem,
+            key_pem=key_pem,
+            origins=_ECAC_ORIGINS,
+            prefer_brazil=True,
         )
         for rec in resultado.get("receitas", []):
             await _upsert_receita(db, escritorio.id, cliente.id, rec["competencia"], rec["valor_receita"], "efd_contrib")
@@ -231,9 +234,13 @@ async def buscar_lote(
 
             if await _playwright_ok():
                 try:
-                    res = await _run_playwright(cert_pem, key_pem,
-                        "https://www8.receita.fazenda.gov.br",
-                        lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano))
+                    res = await _run_ecac_com_proxy(
+                        tarefa_fn=lambda p, c: _tarefa_pgdas(p, c, cliente.cnpj, ano, usar_procuracao=False),
+                        cert_pem=cert_pem,
+                        key_pem=key_pem,
+                        origins=_ECAC_ORIGINS,
+                        prefer_brazil=True,
+                    )
                     for rec in res.get("receitas", []):
                         await _upsert_receita(db, escritorio.id, cliente.id,
                                               rec["competencia"], rec["valor_receita"], "pgdas_d")
@@ -243,9 +250,16 @@ async def buscar_lote(
                     item["pgdas"] = {"erro": str(e)}
 
                 try:
-                    res = await _run_playwright(cert_pem, key_pem,
-                        "https://login.esocial.gov.br",
-                        lambda p, c: _tarefa_esocial(p, c, cliente.cnpj, ano))
+                    res = await _run_ecac_com_proxy(
+                        tarefa_fn=lambda p, c: _tarefa_esocial(
+                            p, c, cliente.cnpj, ano, False, cert_pem=cert_pem, key_pem=key_pem,
+                        ),
+                        cert_pem=cert_pem,
+                        key_pem=key_pem,
+                        origins=_ESOCIAL_ORIGINS,
+                        prefer_brazil=True,
+                        max_tentativas=3,
+                    )
                     for f in res.get("folhas", []):
                         await _upsert_folha(db, escritorio.id, cliente.id,
                                             f["competencia"], f["valor_total_folha"])
@@ -503,7 +517,12 @@ async def preview_certidao(
         raise HTTPException(400, "CNPJ do cliente inválido.")
 
     uf = (cliente.uf or "AM").upper()
-    return await _executar_consulta_certidao(tipo, cnpj, uf, cliente)
+    try:
+        return await _executar_consulta_certidao(tipo, cnpj, uf, cliente)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"Erro na consulta automática: {e}")
 
 
 @router.post("/certidao-consultar")
@@ -2348,7 +2367,7 @@ async def _consultar_cnd_federal(cnpj: str) -> dict:
         try:
             client_kwargs: dict = dict(verify=False, timeout=30, follow_redirects=True, headers=headers)
             if _proxy_rf:
-                client_kwargs["proxies"] = {"https://": _proxy_rf, "http://": _proxy_rf}
+                client_kwargs["proxy"] = _proxy_rf
             async with _httpx.AsyncClient(**client_kwargs) as c:
                 r = await c.get(url)
                 if r.status_code == 200 and len(r.text) > 500 and "502" not in r.text[:200]:
